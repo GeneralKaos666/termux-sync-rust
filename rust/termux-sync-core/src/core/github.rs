@@ -750,7 +750,7 @@ impl GitHubStorage {
                     .unwrap_or_default(),
             )
         });
-        let keep = max_keep.max(0) as usize;
+        let keep = max_keep.max(1) as usize;
         for release in releases.into_iter().skip(keep) {
             let Some(id) = release.get("id").and_then(Value::as_i64) else {
                 continue;

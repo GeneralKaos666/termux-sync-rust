@@ -641,11 +641,25 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
         .get("files")
         .cloned()
         .unwrap_or(Value::Object(Map::new()));
+    let total_size: i64 = files
+        .as_object()
+        .map(|files| {
+            files
+                .values()
+                .filter_map(|info| info.get("size"))
+                .filter_map(fmt::py_int)
+                .sum()
+        })
+        .unwrap_or(0);
     let (verified, verify_details): (Option<bool>, String) = match &storage {
         Storage::GitHub(_) => (Some(true), "stream digest".to_string()),
         Storage::Local(_) => {
-            let (ok, details) = storage::verify_local_backup(Path::new(&location), &files);
-            (Some(ok), details)
+            if std::env::var("TERMUX_SYNC_TEST_VERIFY_FAIL").is_ok() {
+                (Some(false), "injected verification failure".to_string())
+            } else {
+                let (ok, details) = storage::verify_local_backup(Path::new(&location), &files);
+                (Some(ok), details)
+            }
         }
         Storage::Rclone(_) => (
             None,
@@ -689,18 +703,27 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
         storage.delete_old(config::retention_limit(cfg))?;
     }
 
+    if verified == Some(false) {
+        events::emit(
+            "result",
+            vec![
+                ("ok", Value::Bool(false)),
+                ("name", Value::String(backup_name.clone())),
+                ("size", Value::from(total_size)),
+                ("location", Value::String(location)),
+                ("verified", Value::Bool(false)),
+                ("verify_details", Value::String(verify_details.clone())),
+                ("warnings", Value::Bool(true)),
+            ],
+        );
+        cleanup(&tmp_dir);
+        return Err(format!(
+            "RuntimeError: Backup verification failed: {verify_details}"
+        ));
+    }
+
     cleanup(&tmp_dir);
 
-    let total_size: i64 = files
-        .as_object()
-        .map(|files| {
-            files
-                .values()
-                .filter_map(|info| info.get("size"))
-                .filter_map(fmt::py_int)
-                .sum()
-        })
-        .unwrap_or(0);
     render::print_line("");
     render::print_line("  ✓ Backup completed successfully!");
     render::print_line("");

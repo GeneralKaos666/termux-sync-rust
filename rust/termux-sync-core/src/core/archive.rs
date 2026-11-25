@@ -425,7 +425,7 @@ fn check_member_root(
             "Archive member outside expected root {top:?}: {rel:?}"
         ));
     }
-    if entry_type.is_file() && normalized_relative(rel) == Path::new(top) {
+    if !entry_type.is_dir() && normalized_relative(rel) == Path::new(top) {
         return Err(format!(
             "Archive member replaces expected root {top:?}: {rel:?}"
         ));
@@ -991,5 +991,28 @@ mod tests {
         let error =
             extract_archive(&archive, &dest, Some("home"), Some(10), &mut |_| {}).unwrap_err();
         assert!(error.contains("size limit"));
+    }
+
+    #[test]
+    fn rejects_link_entries_over_expected_root() {
+        for kind in [EntryType::Symlink, EntryType::Link] {
+            let temp = tempfile::tempdir().unwrap();
+            let dest = temp.path().join("dest");
+            fs::create_dir_all(dest.join("home")).unwrap();
+            fs::write(dest.join("home/keep.txt"), b"keep").unwrap();
+            let archive = temp.path().join("link-root.tar");
+            let file = File::create(&archive).unwrap();
+            let mut builder = Builder::new(file);
+            builder
+                .append(
+                    &raw_header("home", 0, kind, b"home/keep.txt"),
+                    Cursor::new(b""),
+                )
+                .unwrap();
+            builder.finish().unwrap();
+            let result = extract_archive(&archive, &dest, Some("home"), None, &mut |_| {}).unwrap();
+            assert!(dest.join("home/keep.txt").exists(), "{kind:?}");
+            assert!(!result.warnings.is_empty(), "{kind:?}");
+        }
     }
 }

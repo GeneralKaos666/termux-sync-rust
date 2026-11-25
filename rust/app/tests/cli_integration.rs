@@ -629,3 +629,15 @@ fn error_paths_exit_non_zero() {
         String::from_utf8_lossy(&backup.stdout)
     );
 }
+
+#[test]
+fn backup_fails_when_verification_fails() {
+    let fx = Fixture::new();
+    let out = fx.run_env(
+        &["--json-events", "backup"],
+        None,
+        &[("TERMUX_SYNC_TEST_VERIFY_FAIL", "1")],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\"ok\":false"));
+}
