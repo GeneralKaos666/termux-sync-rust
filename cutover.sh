@@ -2,7 +2,7 @@
 # Interactive cutover from the Python command to the pure Rust binaries.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 BIN="$PREFIX/bin"
 
