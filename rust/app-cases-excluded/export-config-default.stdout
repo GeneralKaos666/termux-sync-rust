@@ -1,0 +1,10 @@
+EXPORT CONFIG
+Save configuration to a file
+Save to file ([CWD]/rust/fixtures/app/home/termux-sync-config-export.json):
+ERROR
+Input was closed
+termux-sync asked a question, but no answer could be read (the input stream ended, or you pressed Ctrl+D).
+at termux-sync.py:3084 in cmd_export_config()
+How to fix
+Run the command directly in the Termux terminal — not through a pipe, script, or widget — and answer the prompts.
+Log: ~/.config/termux-sync/sync.log

@@ -1,0 +1,10 @@
+bin.name = "run-original"
+args = ["export-config", "~/termux-sync-config-export.json"]
+status.code = 0
+fs.sandbox = true
+env.add.HOME = "/data/data/com.termux/files/home/repos/termux-sync-rust-tui/rust/fixtures/app/home"
+env.add.PREFIX = "/data/data/com.termux/files/home/repos/termux-sync-rust-tui/rust/fixtures/app/prefix"
+env.add.TMPDIR = "/data/data/com.termux/files/home/repos/termux-sync-rust-tui/rust/fixtures/app/tmp"
+env.add.PATH = "/data/data/com.termux/files/home/repos/termux-sync-rust-tui/rust/fixtures/app/bin:/data/data/com.termux/files/usr/bin"
+env.add.COLUMNS = "200"
+env.add.NO_COLOR = "1"

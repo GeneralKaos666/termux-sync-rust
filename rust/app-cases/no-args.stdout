@@ -1,0 +1,48 @@
+████████╗███████╗██████╗ ███╗ ███╗██╗ ██╗██╗ ██╗
+╚ ██╔ ╝██╔ ╝██╔ ██╗████╗ ████║██║ ██║╚██╗██╔╝
+██║ █████╗ ██████╔╝██╔████╔██║██║ ██║ ╚███╔╝
+██║ ██╔ ╝ ██╔ ██╗██║╚██╔╝██║██║ ██║ ██╔██╗
+██║ ███████╗██║ ██║██║ ╚ ╝ ██║╚██████╔╝██╔╝ ██╗
+╚ ╝ ╚ ╝╚ ╝ ╚ ╝╚ ╝ ╚ ╝ ╚ ╝ ╚ ╝ ╚ ╝
+Version: v2.0.0
+Source: https://github.com/GeneralKaos666/termux-sync-rust
+• Termux Backup & Restore
+• Opensource & License MIT
+Usage: termux-sync <command> [target] [options]
+Backup & Restore
+backup Create a new backup
+restore Restore from a backup
+list List all available backups
+delete Delete a specific backup
+Configuration
+setup Interactive configuration wizard
+schedule Configure auto-backup schedule
+daemon Run background scheduler (used by Termux:Boot)
+export-config Export config to a file (tokens redacted)
+import-config Import config from a file
+Maintenance
+status Show current config and environment
+logs Show recent log entries
+clear-logs Clear / reset the log file
+check Show disk usage (~, $PREFIX, or a custom path)
+clear-cache Remove temporary and cached files
+help Show this help
+tui Launch the operations TUI
+Options
+-l, --label LABEL Label for this backup
+-n, --name NAME Backup name to restore / delete
+--lines N Lines to show in logs (default 40)
+--json-events Emit JSON progress events (used by the TUI)
+--yes Skip delete / clear-logs / clear-cache confirmations
+--debug Show the full traceback if something fails
+-v, --version Print version and exit
+-h, --help Show this help
+Examples
+$ termux-sync setup
+$ termux-sync backup --label before-new-phone
+$ termux-sync list
+$ termux-sync restore
+$ termux-sync delete --name <backup-name>
+$ termux-sync logs --lines 100
+$ termux-sync check ~
+$ termux-sync import-config <file>

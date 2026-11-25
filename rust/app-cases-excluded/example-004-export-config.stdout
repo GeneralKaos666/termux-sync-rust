@@ -1,0 +1,4 @@
+EXPORT CONFIG
+Save configuration to a file
+✓ Configuration exported to: [CWD]/rust/fixtures/app/home/termux-sync-config-export.json
+⚠ Token and password fields have been redacted from the export.

@@ -1,0 +1,78 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# tsctl — termux-sync control tool for the Rust binaries.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
+BIN="$PREFIX/bin"
+CMD="$BIN/termux-sync"
+TUI="$BIN/termux-sync-tui"
+CONFIG_DIR="$HOME/.config/termux-sync"
+
+usage() {
+  cat <<EOF
+Usage: tsctl <command>
+
+  install     Build and install termux-sync and termux-sync-tui
+  updater     git pull --ff-only, then install
+  uninstall   Remove the installed binaries (keeps config and backups)
+  status      Show installed versions and config paths
+  help        Show this help
+EOF
+}
+
+require_repo() {
+  if [[ ! -f "$ROOT/rust/install.sh" ]]; then
+    echo "rust/install.sh not found; run tsctl from the repository." >&2
+    exit 1
+  fi
+}
+
+cmd_install() {
+  require_repo
+  bash "$ROOT/rust/install.sh"
+}
+
+cmd_updater() {
+  require_repo
+  if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$ROOT" pull --ff-only
+  else
+    echo "Not a git checkout; installing the current tree." >&2
+  fi
+  bash "$ROOT/rust/install.sh"
+}
+
+cmd_uninstall() {
+  for path in "$CMD" "$TUI"; do
+    if [[ -e "$path" ]]; then
+      rm -f "$path"
+      echo "Removed $path"
+    fi
+  done
+  echo "Kept $CONFIG_DIR and your backups."
+}
+
+cmd_status() {
+  for path in "$CMD" "$TUI"; do
+    if [[ -x "$path" ]]; then
+      printf '%-22s %s\n' "$(basename "$path")" "$("$path" --version 2>/dev/null | head -1)"
+    else
+      printf '%-22s not installed\n' "$(basename "$path")"
+    fi
+  done
+  if [[ -d "$CONFIG_DIR" ]]; then
+    echo "config                 $CONFIG_DIR"
+  else
+    echo "config                 not found (run: termux-sync setup)"
+  fi
+}
+
+case "${1:-help}" in
+  install|i) cmd_install ;;
+  updater|update|up) cmd_updater ;;
+  uninstall|un) cmd_uninstall ;;
+  status) cmd_status ;;
+  help|--help|-h) usage ;;
+  *) echo "Unknown command: $1" >&2; usage; exit 1 ;;
+esac

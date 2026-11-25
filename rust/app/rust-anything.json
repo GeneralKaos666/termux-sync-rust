@@ -1,0 +1,47 @@
+{
+  "schema": "rust-anything/front-door@1",
+  "name": "termux-sync",
+  "commands": [
+    "backup",
+    "restore",
+    "list",
+    "delete",
+    "setup",
+    "schedule",
+    "daemon",
+    "export-config",
+    "import-config",
+    "status",
+    "logs",
+    "clear-logs",
+    "check",
+    "clear-cache",
+    "help"
+  ],
+  "units": [
+    {
+      "name": "termux-sync-core",
+      "crate": "termux-sync-core",
+      "path": "../termux-sync-core",
+      "commands": [
+        "backup",
+        "restore",
+        "list",
+        "delete",
+        "setup",
+        "schedule",
+        "daemon",
+        "export-config",
+        "import-config",
+        "status",
+        "logs",
+        "clear-logs",
+        "check",
+        "clear-cache",
+        "help"
+      ],
+      "switch": "RUST_ANYTHING_UNIT_TERMUX_SYNC_CORE"
+    }
+  ],
+  "lifted": true
+}

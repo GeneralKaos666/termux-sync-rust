@@ -1,0 +1,23 @@
+████████╗███████╗██████╗ ███╗ ███╗██╗ ██╗██╗ ██╗
+╚ ██╔ ╝██╔ ╝██╔ ██╗████╗ ████║██║ ██║╚██╗██╔╝
+██║ █████╗ ██████╔╝██╔████╔██║██║ ██║ ╚███╔╝
+██║ ██╔ ╝ ██╔ ██╗██║╚██╔╝██║██║ ██║ ██╔██╗
+██║ ███████╗██║ ██║██║ ╚ ╝ ██║╚██████╔╝██╔╝ ██╗
+╚ ╝ ╚ ╝╚ ╝ ╚ ╝╚ ╝ ╚ ╝ ╚ ╝ ╚ ╝ ╚ ╝
+Version: v1.3.9
+Source: https://github.com/djunekz/termux-sync
+• Termux Backup & Restore
+• Opensource & License MIT
+AUTO-BACKUP
+Schedule automatic backups
+Current schedule: DISABLED @ 02:00 daily
+Enable auto-backup? [y/n] (n): Please enter Y or N
+Enable auto-backup? [y/n] (n): Please enter Y or N
+Enable auto-backup? [y/n] (n):
+ERROR
+Input was closed
+termux-sync asked a question, but no answer could be read (the input stream ended, or you pressed Ctrl+D).
+at termux-sync.py:2639 in cmd_schedule()
+How to fix
+Run the command directly in the Termux terminal — not through a pipe, script, or widget — and answer the prompts.
+Log: ~/.config/termux-sync/sync.log

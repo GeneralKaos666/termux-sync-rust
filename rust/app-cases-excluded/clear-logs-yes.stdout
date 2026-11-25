@@ -1,0 +1,10 @@
+
+CLEAR LOGS
+[CWD]/rust/fixtures/app/home/.config/termux-sync/sync.log
+
+Log file : [CWD]/rust/fixtures/app/home/.config/termux-sync/sync.log
+Size : 4.9 KB
+
+
+✓ Log file cleared.
+

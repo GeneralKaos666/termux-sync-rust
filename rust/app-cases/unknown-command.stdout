@@ -1,0 +1,6 @@
+ERROR
+Unknown command
+'config' is not a termux-sync command.
+How to fix
+Use termux-sync setup to change settings, or termux-sync status to view them.
+Run termux-sync help to see all commands.

@@ -1,0 +1,26 @@
+████████╗███████╗██████╗ ███╗ ███╗██╗ ██╗██╗ ██╗
+╚ ██╔ ╝██╔ ╝██╔ ██╗████╗ ████║██║ ██║╚██╗██╔╝
+██║ █████╗ ██████╔╝██╔████╔██║██║ ██║ ╚███╔╝
+██║ ██╔ ╝ ██╔ ██╗██║╚██╔╝██║██║ ██║ ██╔██╗
+██║ ███████╗██║ ██║██║ ╚ ╝ ██║╚██████╔╝██╔╝ ██╗
+╚ ╝ ╚ ╝╚ ╝ ╚ ╝╚ ╝ ╚ ╝ ╚ ╝ ╚ ╝ ╚ ╝
+Version: v1.3.9
+Source: https://github.com/djunekz/termux-sync
+• Termux Backup & Restore
+• Opensource & License MIT
+SETUP
+Configure termux-sync storage and preferences
+Choose your storage backend:
+[1] Local storage on device
+[2] Google Drive via rclone
+[3] GitHub private repo ★ Recommended
+Storage [1/2/3] (3): Please select one of the available options
+Storage [1/2/3] (3): Please select one of the available options
+Storage [1/2/3] (3):
+ERROR
+Input was closed
+termux-sync asked a question, but no answer could be read (the input stream ended, or you pressed Ctrl+D).
+at termux-sync.py:2508 in cmd_setup()
+How to fix
+Run the command directly in the Termux terminal — not through a pipe, script, or widget — and answer the prompts.
+Log: ~/.config/termux-sync/sync.log

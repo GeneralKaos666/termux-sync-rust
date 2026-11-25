@@ -1,0 +1,2 @@
+Transferred:   	5 MiB / 10 MiB, 50%, 2 MiB/s, ETA 2s
+Transferred:   	10 MiB / 10 MiB, 100%, 0 B/s, ETA -

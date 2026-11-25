@@ -1,0 +1,19 @@
+
+IMPORT CONFIG
+Load configuration from a file
+
+
+
+ERROR
+
+File not found
+
+[CWD]/rust/fixtures/app/home/my-backup-config.json
+
+How to fix
+Check the path and try again.
+
+
+
+Log: ~/.config/termux-sync/sync.log
+

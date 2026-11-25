@@ -1,0 +1,5 @@
+ERROR
+Invalid usage
+unrecognized arguments: --bogus
+How to fix
+Run termux-sync help to see the correct usage.

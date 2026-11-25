@@ -1,0 +1,28 @@
+{"fn": "human_size", "args": [0], "ok": "0.0 B"}
+{"fn": "human_size", "args": [1], "ok": "1.0 B"}
+{"fn": "human_size", "args": [1023], "ok": "1023.0 B"}
+{"fn": "human_size", "args": [1024], "ok": "1.0 KB"}
+{"fn": "human_size", "args": [1536], "ok": "1.5 KB"}
+{"fn": "human_size", "args": [1048576], "ok": "1.0 MB"}
+{"fn": "human_size", "args": [5368709120], "ok": "5.0 GB"}
+{"fn": "human_size", "args": [2199023255552], "ok": "2.0 TB"}
+{"fn": "fmt_elapsed", "args": [0], "ok": "0:00:00"}
+{"fn": "fmt_elapsed", "args": [59], "ok": "0:00:59"}
+{"fn": "fmt_elapsed", "args": [61], "ok": "0:01:01"}
+{"fn": "fmt_elapsed", "args": [3600], "ok": "1:00:00"}
+{"fn": "fmt_elapsed", "args": [3725.8], "ok": "1:02:05"}
+{"fn": "fmt_elapsed", "args": [-1], "ok": "-1:59:59"}
+{"fn": "fmt_elapsed", "args": [-3661.9], "ok": "-2:58:59"}
+{"fn": "status_icon", "args": [true], "ok": "[bold green]✓[/bold green]"}
+{"fn": "status_icon", "args": [false], "ok": "[bold red]✗[/bold red]"}
+{"fn": "short_path", "args": ["/data/data/com.termux/files/home/repos/termux-sync-rust-tui/rust/fixtures/unit-prefix"], "ok": "$PREFIX"}
+{"fn": "short_path", "args": ["/data/data/com.termux/files/home/repos/termux-sync-rust-tui/rust/fixtures/unit-prefix/bin/tar"], "ok": "$PREFIX/bin/tar"}
+{"fn": "short_path", "args": ["/data/data/com.termux/files/home/repos/termux-sync-rust-tui/rust/fixtures/unit-home"], "ok": "~"}
+{"fn": "short_path", "args": ["/data/data/com.termux/files/home/repos/termux-sync-rust-tui/rust/fixtures/unit-home/.config/app"], "ok": "~/.config/app"}
+{"fn": "short_path", "args": ["/etc/hosts"], "ok": "/etc/hosts"}
+{"fn": "is_narrow", "args": [], "ok": false}
+{"fn": "sha256", "args": ["/data/data/com.termux/files/home/repos/termux-sync-rust-tui/rust/fixtures/unit-home/data/file.txt"], "ok": "fd063591eef5279230f15c203d19607e01462f90603980108f67494d41d1f245"}
+{"fn": "dir_size", "args": ["/data/data/com.termux/files/home/repos/termux-sync-rust-tui/rust/fixtures/unit-home/data"], "ok": 13}
+{"fn": "cmd_import_config", "args": ["/no/such/file"], "error": "UserError: /no/such/file"}
+{"fn": "load_config", "args": [], "error": "UserError: The config file is not valid JSON (line 1, column 2).\nFile: /data/data/com.termux/files/home/repos/termux-sync-rust-tui/rust/fixtures/unit-home/.config/termux-sync/config.json"}
+{"fn": "cmd_backup", "args": [{"storage": "github", "github_token": "", "github_repo": ""}], "error": "UserError: GitHub storage is selected, but the token or repository is not set."}

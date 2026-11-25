@@ -1,0 +1,23 @@
+{
+  "name": "termux_backup_20250101_120000",
+  "date": "2025-01-01T12:00:00",
+  "label": "fixture backup",
+  "termux_home": "/data/data/com.termux/files/home",
+  "termux_usr": "/data/data/com.termux/files/usr",
+  "storage": "local",
+  "compression": "gz",
+  "version": "1.3.9",
+  "files": {
+    "home": {
+      "archive": "home.tar.gz",
+      "size": 126,
+      "checksum": "fd402fbd24ad4648c3baa21c0eaa2affc358c0d8639c25cf364b495bc4bc5808",
+      "source": "/data/data/com.termux/files/home"
+    }
+  },
+  "packages": [
+    "bash",
+    "coreutils",
+    "python"
+  ]
+}

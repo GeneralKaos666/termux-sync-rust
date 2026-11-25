@@ -1,0 +1,4 @@
+{"v":1,"event":"start","name":"x","storage":"github"}
+{"v":1,"event":"backup","name":"b1","date":"2026-01-01T00:00:00","label":"","packages":2,"size":10,"version":"1.3.9","compression":"gz","storage":"github"}
+{"v":1,"event":"backup","name":"b2","date":"2026-01-02T00:00:00","label":"x","packages":3,"size":20,"version":"1.3.9","compression":"xz","storage":"github"}
+{"v":1,"event":"result","ok":true,"count":2}

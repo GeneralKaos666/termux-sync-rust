@@ -1,0 +1,24 @@
+
+CLEAR LOGS
+[CWD]/rust/fixtures/app/home/.config/termux-sync/sync.log
+
+Log file : [CWD]/rust/fixtures/app/home/.config/termux-sync/sync.log
+Size : 4.9 KB
+
+Clear all log entries? [y/n] (n):
+
+ERROR
+
+Input was closed
+
+termux-sync asked a question, but no answer could be read (the input stream ended, or you pressed Ctrl+D).
+
+at termux-sync.py:2841 in cmd_clear_logs()
+
+How to fix
+Run the command directly in the Termux terminal — not through a pipe, script, or widget — and answer the prompts.
+
+
+
+Log: ~/.config/termux-sync/sync.log
+

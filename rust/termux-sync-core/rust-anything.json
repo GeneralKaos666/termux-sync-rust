@@ -1,0 +1,916 @@
+{
+  "schema": "rust-anything/bridge@1",
+  "root": "/data/data/com.termux/files/home/repos/termux-sync-rust-tui",
+  "unit": "src/termux_sync/",
+  "language": "python",
+  "kind": "pyo3",
+  "crate_name": "termux-sync-core",
+  "exports": [
+    {
+      "name": "log",
+      "file": "src/termux_sync/__init__.py",
+      "line": 131,
+      "params": [
+        {
+          "name": "level",
+          "ts_type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "message",
+          "ts_type": "string",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "load_config",
+      "file": "src/termux_sync/__init__.py",
+      "line": 160,
+      "params": [],
+      "returns": "dict",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "save_config",
+      "file": "src/termux_sync/__init__.py",
+      "line": 179,
+      "params": [
+        {
+          "name": "cfg",
+          "ts_type": "dict",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "event_stage",
+      "file": "src/termux_sync/__init__.py",
+      "line": 238,
+      "params": [
+        {
+          "name": "stage_id",
+          "ts_type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "label",
+          "ts_type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "index",
+          "ts_type": "int",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "total",
+          "ts_type": "int",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "state",
+          "ts_type": "string",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "event_confirmation",
+      "file": "src/termux_sync/__init__.py",
+      "line": 358,
+      "params": [],
+      "returns": "boolean",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "enable_event_mode",
+      "file": "src/termux_sync/__init__.py",
+      "line": 371,
+      "params": [
+        {
+          "name": "cfg",
+          "ts_type": "dict",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "print_error",
+      "file": "src/termux_sync/__init__.py",
+      "line": 391,
+      "params": [
+        {
+          "name": "title",
+          "ts_type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "message",
+          "ts_type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "hint",
+          "ts_type": "string",
+          "optional": true,
+          "rest": false,
+          "default": "\"\""
+        },
+        {
+          "name": "where",
+          "ts_type": "string",
+          "optional": true,
+          "rest": false,
+          "default": "\"\""
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "handle_crash",
+      "file": "src/termux_sync/__init__.py",
+      "line": 471,
+      "params": [
+        {
+          "name": "exc",
+          "ts_type": "Exception",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "print_banner",
+      "file": "src/termux_sync/__init__.py",
+      "line": 495,
+      "params": [],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "note",
+      "file": "src/termux_sync/__init__.py",
+      "line": 516,
+      "params": [
+        {
+          "name": "text",
+          "ts_type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "style",
+          "ts_type": "string",
+          "optional": true,
+          "rest": false,
+          "default": "\"\""
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "print_section",
+      "file": "src/termux_sync/__init__.py",
+      "line": 522,
+      "params": [
+        {
+          "name": "title",
+          "ts_type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "subtitle",
+          "ts_type": "string",
+          "optional": true,
+          "rest": false,
+          "default": "\"\""
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "status_icon",
+      "file": "src/termux_sync/__init__.py",
+      "line": 530,
+      "params": [
+        {
+          "name": "ok",
+          "ts_type": "boolean",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "string",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "is_narrow",
+      "file": "src/termux_sync/__init__.py",
+      "line": 534,
+      "params": [],
+      "returns": "boolean",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "make_progress",
+      "file": "src/termux_sync/__init__.py",
+      "line": 539,
+      "params": [
+        {
+          "name": "transient",
+          "ts_type": "boolean",
+          "optional": true,
+          "rest": false,
+          "default": "False"
+        },
+        {
+          "name": "percent",
+          "ts_type": "boolean",
+          "optional": true,
+          "rest": false,
+          "default": "False"
+        }
+      ],
+      "returns": "Progress",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "fmt_elapsed",
+      "file": "src/termux_sync/__init__.py",
+      "line": 558,
+      "params": [
+        {
+          "name": "seconds",
+          "ts_type": "number",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "string",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "print_backup_list",
+      "file": "src/termux_sync/__init__.py",
+      "line": 576,
+      "params": [
+        {
+          "name": "backups",
+          "ts_type": "unknown[]",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "title",
+          "ts_type": "string",
+          "optional": true,
+          "rest": false,
+          "default": "\"Available Backups\""
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "human_size",
+      "file": "src/termux_sync/__init__.py",
+      "line": 619,
+      "params": [
+        {
+          "name": "size_bytes",
+          "ts_type": "int",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "string",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "sha256",
+      "file": "src/termux_sync/__init__.py",
+      "line": 628,
+      "params": [
+        {
+          "name": "path",
+          "ts_type": "Path",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "chunk",
+          "ts_type": "unknown",
+          "optional": true,
+          "rest": false,
+          "default": "1 << 20"
+        }
+      ],
+      "returns": "string",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "get_installed_packages",
+      "file": "src/termux_sync/__init__.py",
+      "line": 666,
+      "params": [],
+      "returns": "string[]",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "install_packages",
+      "file": "src/termux_sync/__init__.py",
+      "line": 685,
+      "params": [
+        {
+          "name": "pkg_list",
+          "ts_type": "string[]",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "console",
+          "ts_type": "Console",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "string[]",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "write_manifest",
+      "file": "src/termux_sync/__init__.py",
+      "line": 915,
+      "params": [
+        {
+          "name": "backup_dir",
+          "ts_type": "Path",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "meta",
+          "ts_type": "dict",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "read_manifest",
+      "file": "src/termux_sync/__init__.py",
+      "line": 922,
+      "params": [
+        {
+          "name": "backup_dir",
+          "ts_type": "Path",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "dict | undefined",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "get_storage",
+      "file": "src/termux_sync/__init__.py",
+      "line": 1670,
+      "params": [
+        {
+          "name": "cfg",
+          "ts_type": "dict",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_backup",
+      "file": "src/termux_sync/__init__.py",
+      "line": 1707,
+      "params": [
+        {
+          "name": "cfg",
+          "ts_type": "dict",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "label",
+          "ts_type": "string",
+          "optional": true,
+          "rest": false,
+          "default": "\"\""
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_restore",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2222,
+      "params": [
+        {
+          "name": "cfg",
+          "ts_type": "dict",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "backup_name",
+          "ts_type": "string",
+          "optional": true,
+          "rest": false,
+          "default": "\"\""
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_list",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2391,
+      "params": [
+        {
+          "name": "cfg",
+          "ts_type": "dict",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_delete",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2453,
+      "params": [
+        {
+          "name": "cfg",
+          "ts_type": "dict",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "backup_name",
+          "ts_type": "string",
+          "optional": true,
+          "rest": false,
+          "default": "\"\""
+        },
+        {
+          "name": "assume_yes",
+          "ts_type": "boolean",
+          "optional": true,
+          "rest": false,
+          "default": "False"
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_setup",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2496,
+      "params": [],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "load_schedule",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2616,
+      "params": [],
+      "returns": "dict",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "save_schedule",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2623,
+      "params": [
+        {
+          "name": "sched",
+          "ts_type": "dict",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_schedule",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2629,
+      "params": [],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_daemon",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2695,
+      "params": [
+        {
+          "name": "cfg",
+          "ts_type": "dict",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "short_path",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2726,
+      "params": [
+        {
+          "name": "p",
+          "ts_type": "unknown",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "string",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_status",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2738,
+      "params": [
+        {
+          "name": "cfg",
+          "ts_type": "dict",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_logs",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2805,
+      "params": [
+        {
+          "name": "lines",
+          "ts_type": "int",
+          "optional": true,
+          "rest": false,
+          "default": "40"
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_clear_logs",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2831,
+      "params": [
+        {
+          "name": "assume_yes",
+          "ts_type": "boolean",
+          "optional": true,
+          "rest": false,
+          "default": "False"
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "dir_size",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2850,
+      "params": [
+        {
+          "name": "path",
+          "ts_type": "Path",
+          "optional": false,
+          "rest": false
+        }
+      ],
+      "returns": "int",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_check",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2875,
+      "params": [
+        {
+          "name": "target",
+          "ts_type": "string",
+          "optional": true,
+          "rest": false,
+          "default": "\"\""
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_clear_cache",
+      "file": "src/termux_sync/__init__.py",
+      "line": 2981,
+      "params": [
+        {
+          "name": "assume_yes",
+          "ts_type": "boolean",
+          "optional": true,
+          "rest": false,
+          "default": "False"
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_export_config",
+      "file": "src/termux_sync/__init__.py",
+      "line": 3072,
+      "params": [
+        {
+          "name": "output_path",
+          "ts_type": "string",
+          "optional": true,
+          "rest": false,
+          "default": "\"\""
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "cmd_import_config",
+      "file": "src/termux_sync/__init__.py",
+      "line": 3098,
+      "params": [
+        {
+          "name": "input_path",
+          "ts_type": "string",
+          "optional": true,
+          "rest": false,
+          "default": "\"\""
+        }
+      ],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    },
+    {
+      "name": "print_help",
+      "file": "src/termux_sync/__init__.py",
+      "line": 3199,
+      "params": [],
+      "returns": "unknown",
+      "is_async": false,
+      "is_generator": false,
+      "type_params": [],
+      "uses_instanceof": false
+    }
+  ],
+  "classes": [],
+  "js_only": [
+    {
+      "name": "emit_event",
+      "file": "src/termux_sync/__init__.py",
+      "line": 233,
+      "reason": "takes `**kwargs`"
+    },
+    {
+      "name": "create_archive",
+      "file": "src/termux_sync/__init__.py",
+      "line": 727,
+      "reason": "calls its parameter `on_member`: a callable"
+    },
+    {
+      "name": "extract_archive",
+      "file": "src/termux_sync/__init__.py",
+      "line": 873,
+      "reason": "calls its parameter `on_member`: a callable"
+    },
+    {
+      "name": "build_parser",
+      "file": "src/termux_sync/__init__.py",
+      "line": 3249,
+      "reason": "a command-line entry point: it stays in Python, and `app front-door` takes the command line over when the whole app moves"
+    },
+    {
+      "name": "main",
+      "file": "src/termux_sync/__init__.py",
+      "line": 3281,
+      "reason": "a command-line entry point: it stays in Python, and `app front-door` takes the command line over when the whole app moves"
+    },
+    {
+      "name": "EventWriter",
+      "file": "src/termux_sync/__init__.py",
+      "line": 196,
+      "reason": "class: public attribute `secrets`, public attribute `stream`"
+    },
+    {
+      "name": "EventProgress",
+      "file": "src/termux_sync/__init__.py",
+      "line": 242,
+      "reason": "class: public attribute `interval`, public attribute `last`, public attribute `stage`"
+    },
+    {
+      "name": "UserError",
+      "file": "src/termux_sync/__init__.py",
+      "line": 381,
+      "reason": "class: inherits from Exception, public attribute `hint`, public attribute `message`, public attribute `title`"
+    },
+    {
+      "name": "LocalStorage",
+      "file": "src/termux_sync/__init__.py",
+      "line": 930,
+      "reason": "class: public attribute `root`, public attribute `stored_checksums`"
+    },
+    {
+      "name": "GDriveStorage",
+      "file": "src/termux_sync/__init__.py",
+      "line": 1028,
+      "reason": "class: public attribute `folder_id`, public class attribute `REMOTE`"
+    },
+    {
+      "name": "GitHubStorage",
+      "file": "src/termux_sync/__init__.py",
+      "line": 1134,
+      "reason": "class: public attribute `branch`, public attribute `repo`, public attribute `token`, public class attribute `API`, public class attribute `CHUNK_SIZE`, public class attribute `MAX_RETRIES`"
+    },
+    {
+      "name": "StreamAbort",
+      "file": "src/termux_sync/__init__.py",
+      "line": 1573,
+      "reason": "class: inherits from Exception, public attribute `original`"
+    },
+    {
+      "name": "FriendlyParser",
+      "file": "src/termux_sync/__init__.py",
+      "line": 3227,
+      "reason": "class: inherits from argparse.ArgumentParser"
+    }
+  ]
+}

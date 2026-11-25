@@ -1,0 +1,13 @@
+IMPORT CONFIG
+Load configuration from a file
+[..]
+[..]
+[..]
+[..]
+[CWD]/rust/fixtures/app/home/termux-sync-config-export.json
+[..]
+[..]
+[..]
+[..]
+[..]
+Log: ~/.config/termux-sync/sync.log

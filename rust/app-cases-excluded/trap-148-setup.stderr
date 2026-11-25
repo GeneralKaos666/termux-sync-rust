@@ -1,0 +1,3 @@
+/data/data/com.termux/files/usr/lib/python3.14/getpass.py:99: GetPassWarning: Can not control echo on the terminal.
+passwd = fallback_getpass(prompt, stream)
+Warning: Password input may be echoed.

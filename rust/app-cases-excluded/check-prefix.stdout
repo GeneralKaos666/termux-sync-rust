@@ -1,0 +1,19 @@
+
+DISK CHECK
+Storage usage overview
+
+
+
+Location Size Usage
+
+[CWD]/rust/fixtures/app/prefix 34.0 B ████████████████████████ 100.0%
+
+
+
+
+Name Size Usage
+
+📁 etc 17.0 B ████████████░░░░░░░░░░░░ 50.0%
+📁 lib 17.0 B ████████████░░░░░░░░░░░░ 50.0%
+
+

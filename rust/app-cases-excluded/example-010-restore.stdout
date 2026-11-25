@@ -1,0 +1,10 @@
+
+RESTORE
+Restoring your Termux environment from a backup
+
+Fetching available backups…
+
+Step 1/4 Downloading backup…
+
+✗ Download failed: Backup not found: [CWD]/rust/fixtures/app/home/termux-backups/termux_backup_20240415_143000
+

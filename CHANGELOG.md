@@ -1,0 +1,348 @@
+# Changelog
+
+All notable changes to termux-sync will be documented in this file.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+Version numbers follow [Semantic Versioning](https://semver.org/).
+
+---
+
+## [Unreleased]
+
+## [2.0.0] - 2026-11-24
+
+### Changed
+- The CLI and TUI are now pure Rust. `termux-sync` is built from `rust/app`; the Python
+  implementation stays only as reference.
+- Archives are GNU tar (Python still reads them), with streaming GitHub parts unchanged.
+- CLI human text is normalized; JSON events, exit codes, configs, manifests and backup
+  layouts stay compatible.
+
+### Added
+- `rust/install.sh` builds and installs both binaries.
+- `rust/cutover.sh` walks through replacing the Python command and rolling back.
+
+---
+
+## [1.3.9] - 2026-11-21
+
+### Fixed
+- **Backups no longer contain the GitHub token.** The home archive included `~/.config/termux-sync/config.json`, so every uploaded backup carried the personal access token used to upload it. That folder is now excluded from the home archive.
+- **A manifest entry without a checksum is no longer trusted.** A missing checksum used to be compared against itself, so a tampered archive passed verification. Restore now reports it as failed.
+- **Release asset names are validated before download.** A name that is not a plain file name aborts the restore instead of being written outside the temporary folder.
+- **Pruning only removes folders that contain a backup manifest.** A misconfigured local backup path can no longer delete unrelated directories.
+- **Backup dates and schedule labels are escaped before printing**, so metadata from a shared backup cannot inject terminal markup.
+- **Exclude patterns tolerate a leading `./`.** A pattern such as `./node_modules` used to match nothing; it now behaves like `node_modules`.
+
+### Changed
+- The installer and `tsctl` now refuse to install when the release advertises a checksum that cannot be downloaded or is malformed. Prerelease tags are recognised, and the source-tarball fallback no longer fails a checksum that belongs to a different file.
+- Documentation now recommends a fine-grained personal access token limited to the backup repository with `Contents: Read and write`.
+
+### Security
+- **Backups created by earlier versions contain the GitHub token.** The home archive used to include `~/.config/termux-sync/config.json`, which stores the token in plain text, so every backup uploaded by a version before 1.3.9 carries it. Treat that token as exposed: rotate it at GitHub and delete the old backups. This release stops including the file; it does not remove copies that were already uploaded, and restoring an old backup brings the old configuration back.
+
+---
+
+## [1.3.8] - 2026-11-19
+
+### Fixed
+- **Restore could still write outside the backed-up folder through links.** The 1.3.7 check only looked at member names. An archive could contain a symbolic link such as `etc -> bin`, or a hard link to an existing file, and then write through it. Every member, and the target of every symbolic or hard link, must now stay inside the folder its archive is restored to (`etc`, `lib` or `home`); anything else is skipped and logged. Relative links that stay inside that folder still work.
+
+---
+
+## [1.3.7] - 2026-11-19
+
+### Added
+- `Repo Bot` workflow that runs every 6 hours (and on demand). It runs lint and tests against the latest dependencies, checks that the version in `pyproject.toml`, the source, `uv.lock` and `CHANGELOG.md` agree, and checks that `termux-sync.py` mirrors the package. It opens a pull request when the script drifted, starts the PyPI publish when a GitHub release is missing from PyPI for more than 90 minutes, and keeps a single "Repository health report" issue up to date, closing it when everything passes again.
+- `release-pypi.yml` can now be started by hand (`workflow_dispatch`) with an existing release tag, which is what the bot uses to repair a missing PyPI upload.
+
+### Fixed
+- **Restore could write outside the backed-up directory.** Each archive was extracted into the parent of its backup root, and members were only checked against that wider directory, so a crafted `usr_etc` or `usr_lib` archive could overwrite files such as `$PREFIX/bin/sh`. Every member must now start with the folder name the backup would have produced (`etc`, `lib`, `home`); anything else is skipped and logged.
+- Package names read from a manifest are validated and passed to `pkg install` after `--`, so a name starting with `-` can no longer be read as an option.
+
+### Changed
+- The daemon no longer re-reads the schedule at the top of every loop before waiting; it checks it once after each wait, which is when a change matters. Behaviour is otherwise the same as in 1.3.6.
+- More regression tests for the 1.3.6 fixes (temporary folder selection, config permissions, unsafe archive names in a manifest, invalid names in `delete`, hard link and extraction failures), to bring patch coverage back above the Codecov target.
+
+---
+
+## [1.3.6] - 2026-11-13
+
+### Fixed
+- **Local backups were archived into every new backup.** The default local folder `~/termux-backups` lives inside the home directory, so each backup also contained all previous backups and grew without bound. The configured local backup folder is now excluded from the archive of any directory that contains it.
+- **`termux-sync.py` was out of date.** The standalone script shipped in release tarballs (used by `install.sh` and `tsctl`) was still version 1.3.0, so users who installed from a release did not get the 1.3.x fixes. It is now an exact copy of `src/termux_sync/__init__.py`, and the release workflow regenerates it from the package before building the tarball.
+- **Exclude patterns matched any part of a path.** A pattern such as `.m2` or `Music` also dropped unrelated files like `notes.m2x`. Patterns now match whole path components, so `.cache` skips the `.cache` folder and everything below it but not `a.cache.txt`.
+- **`delete --name` could remove folders outside the backup folder.** A name containing `../` was joined to the backup path before deleting. Backup names are now reduced to a plain name in `delete` and in the local storage backend.
+- Backup labels containing `/` or other special characters could produce invalid backup names and tags. Labels are now sanitised (letters, digits, `.`, `_`, `-`); the original label is still stored in the manifest.
+- A manifest listing an archive name with path separators is now refused during checksum verification and extraction instead of being read from outside the download folder.
+- Hard links inside an archive were checked against the wrong base directory during the safety check. They are now checked relative to the restore root.
+- Files that could not be extracted during `restore` were dropped silently. They are now written to the log.
+- GitHub API requests had no timeout and could hang forever on a bad connection. They now time out after 60 seconds.
+- GitHub upload treated every HTTP 422 as "already uploaded". Only the `already_exists` response is skipped now; other validation errors are reported.
+- `termux-sync logs` never coloured `WARNING` lines because it looked for `[WARN]`. Log levels are now consistent and matched correctly.
+- `termux-sync schedule` printed the wrong boot script name (`start-sync.sh`). It now shows `termux-sync-daemon.sh`.
+- The daemon read the schedule once at start and kept running after auto-backup was disabled. It now re-reads the schedule before every wait and stops when auto-backup is disabled.
+- `setup` stored a local path such as `~/backups` literally, creating a folder named `~`. The path is now expanded.
+- `import-config` crashed with an unclear error when the JSON file was not an object. It now reports a clear message.
+- Temporary files fell back to a Termux-only path when `TMPDIR` was unset, which failed outside Termux. The system temporary directory is used when neither `TMPDIR` nor `$PREFIX/tmp` exists.
+- `tsctl` accepted an empty `.sha256` download and then failed with a confusing checksum mismatch. An empty checksum file is now treated as missing, as `install.sh` already does.
+- `uv.lock` still recorded the package version as 1.3.0.
+
+### Security
+- `config.json` (which stores the GitHub token and encryption password) is now written with permissions `600`, and existing files are tightened on the next save.
+
+### Changed
+- CI now fails if `termux-sync.py` differs from `src/termux_sync/__init__.py`, or if the version in `pyproject.toml` and the source differ.
+- The release workflow now fails if the tag, `pyproject.toml` and `VERSION` disagree, so a mismatched tag can no longer produce a release or a PyPI upload with the wrong version.
+- The PyPI publish step uses `skip-existing`, so re-running a release after a partial failure no longer fails on files that are already uploaded.
+- Removed the `Python :: 3.8` classifier, which contradicted `requires-python = ">=3.10"`.
+
+---
+
+## [1.3.5] - 2026-10-30
+
+### Added
+- Automated test suite in `tests/` with 242 tests and about 92% line coverage of `src/termux_sync/__init__.py`. It covers formatting helpers, config and manifest handling, archive creation and extraction (including unsafe tar member rejection), error explanations, the command line interface, the local, Google Drive and GitHub storage backends, the full `backup`, `restore`, `list` and `delete` flows, and the interactive `setup`, `schedule`, `daemon`, `clear-cache`, `check`, `status`, `logs`, `export-config` and `import-config` commands. No test touches the real `~/.config/termux-sync`, the network or `rclone`.
+- `dev` extra in `pyproject.toml` (`pytest`, `pytest-cov`, `ruff`, `mypy`) together with pytest, coverage, ruff and mypy configuration.
+- Coverage reporting in CI: tests run with `pytest --cov` and the report is uploaded to Codecov from the Python 3.13 job.
+- CI step that runs `termux-sync --version` after installing the package, to verify the entry point.
+- CI type check with `mypy` (non-blocking for now, there are existing findings to clean up).
+- `uv.lock`, so development installs are reproducible.
+- `.python-version` pinning the development runtime to Python 3.13.
+- `.gitignore` for Python build output, virtual environments, `.env` files, tool caches, coverage output and editor files.
+- "Running Tests" section in `CONTRIBUTING.md` describing how to install the development dependencies, run the tests, and run `ruff` and `mypy`. The pull request checklist now mentions running them.
+- `.env.example` documenting the supported environment variables (`TERMUX_SYNC_DEBUG`, `PREFIX`, `HOME`, `TMPDIR`).
+- `assets/logo.svg`, a project logo displayed at the top of the README.
+- "Environment Variables" section in the README with a reference table for each variable.
+
+### Changed
+- **Minimum supported Python is now 3.10** (was 3.9). Updated in `requires-python`, the package classifiers, the `ruff` and `mypy` targets, the CI test matrix (now 3.10 to 3.13) and the documentation. Python 3.9 is end-of-life, and the patched `pytest` release does not support it.
+- CI lint job now fails the build on `ruff` findings (previously non-blocking) and also lints `tests/`.
+- CI test job now runs on Python 3.10, 3.11, 3.12 and 3.13 with `fail-fast` disabled, so one failing version no longer hides the others.
+- Removed unused imports from `src/termux_sync/__init__.py` (`threading`, `FileSizeColumn`, `TransferSpeedColumn`, `Text`, `Live`, `Columns`, `Syntax`) and fixed minor `ruff` findings (several imports on one line, an f-string without placeholders). No behaviour change.
+- README project structure now lists `assets/` and `.env.example`.
+
+### Fixed
+- Tests no longer depend on running as root: temporary files are redirected to a per-test directory instead of the Termux default path, and the permission test now uses an unreadable file instead of an unreadable directory. This fixed the three failures seen on GitHub Actions.
+- Tests: upload requests to GitHub are now identified by parsing the URL and comparing its hostname instead of searching for a substring, resolving three CodeQL "Incomplete URL substring sanitization" alerts in `tests/test_github_network.py`.
+- Tests: removed a side-effect from an `assert` statement in `tests/test_storage.py` so the write still runs when Python is started with `-O`, resolving a CodeQL "An assert statement has a side-effect" alert.
+
+### Security
+- Development dependency `pytest` raised to `>=9.0.3` to fix the vulnerable `/tmp/pytest-of-{user}` directory handling (CVE-2025-71176, GHSA-6w46-j5rx-g56g, Dependabot alert #1). The lockfile no longer contains the affected 8.x release. This only affects development environments, not installed copies of termux-sync.
+
+---
+
+## [1.3.0] - 2026-10-21
+
+### Changed
+- **Cleaner, phone-friendly output.** All progress bars now use a single non-wrapping line per task: the label is cut with "…" instead of pushing the bar and timer onto a second line.
+- Backup picker (`restore`, `delete`) no longer overflows the screen. On narrow terminals each backup is shown as a compact two-line card (name, then date · packages · size · label); on wide terminals it stays a table, now with Size and Pkgs columns. The redundant "Storage" column was removed.
+- `setup`: wrapped text keeps its indentation, the exclude-pattern list is shown as a short summary (full list only when you choose to edit it), and the compression hint is its own line.
+- Summary panels (backup, restore, setup) are more compact and show short paths (`~/.config/...`).
+- The `TERMUX` ASCII banner falls back to a one-line title on terminals too narrow to draw it.
+- `restore` step 4 now shows which package is being installed (`12/496  git`) and reports how many could not be installed; failures are written to the log.
+
+### Fixed
+- **`restore` from GitHub flooded the screen.** Every downloaded part (25+) kept its own progress row, so the display grew taller than the screen and was drawn over itself. Downloads now use one overall progress bar (bytes, current part, elapsed time) that disappears when finished and is replaced by a single "Downloaded N files (size, time)" line.
+- GitHub downloads are streamed to disk in blocks instead of being read fully into memory, and parts are joined without loading them into RAM. A full disk now stops immediately instead of retrying.
+- `backup` to GitHub: finished upload rows no longer pile up in the progress display.
+- Backups without a manifest no longer show their tag name as a duplicate "Label".
+
+### Security
+- `setup` no longer prints a saved GitHub token back to the screen when you re-run it (the default value is hidden).
+
+---
+
+## [1.2.8] - 2026-10-15
+
+## Fixed
+- `status` tables fit narrow phone screens: long paths are shortened (`$PREFIX/bin/tar`, `~/.config/...`), the ✓/✗ sits in its own column, and `rclone` is shown as "not needed" unless Google Drive is the selected storage.
+- **GitHub backups no longer need room for the whole archive.** The archive is streamed and uploaded in 200 MB parts, each deleted right after it is sent (before, the full archive *plus* a split copy were written to disk, which caused "No space left on device"). The backup format is unchanged, so `restore` works as before. Needs about 250 MB free.
+- Upload retry logic: permanent HTTP errors (bad token, etc.) now stop immediately instead of retrying for minutes; "already uploaded" (422) is handled again.
+- Running out of disk space during `backup` stops with a clear message instead of continuing with a broken backup.
+- `backup` to GitHub now checks the repository (token, name, not empty) *before* the long archive step, instead of failing after the archive is built.
+- GitHub API errors are shown as short readable messages (e.g. "repository is empty") instead of raw JSON.
+- If an upload fails, the finished archives are kept in the temp folder instead of being deleted.
+
+---
+
+## [1.2.6] - 2026-10-15
+
+### Changed
+- Errors are now shown as a clean panel (what happened, where, how to fix) instead of a raw Python traceback. The full traceback is written to the log file; use `--debug` to print it.
+- `termux-sync help` / `-h` now renders a grouped, readable help screen instead of the long argparse dump.
+- Unknown commands show "Did you mean ...?" suggestions (and point `update` to `tsctl updater`).
+- Closed input (EOF / Ctrl+D) during a prompt is reported clearly instead of crashing.
+
+### Fixed
+- Missing `rich` no longer causes a `NameError`; it is installed automatically on first run.
+- Invalid "Max backups" input in `setup` no longer crashes.
+- Error text containing square brackets can no longer break rich markup
+
+---
+
+## [1.2.4] - 2026-07-28
+
+### Security
+
+- **`restore` — arbitrary file write via attacker-controlled `source` field in `manifest.json` (High, GHSA-259w-wmqg-fp76)** — during restore, `manifest["files"][key]["source"]` was taken from the backup archive itself (fully attacker-controlled) and used directly as the extraction destination, and `extract_archive()` called `tarfile.extract()` on every member with no path-containment check. A malicious or tampered backup could therefore write/overwrite arbitrary files anywhere the Termux user has write access, including shell startup files. Fixed by: (1) deriving the extraction destination only from the app's own known `BACKUP_ITEMS` roots instead of manifest content, refusing unknown manifest keys; (2) validating every tar member's resolved path (and symlink/hardlink targets) stays inside the destination before extraction, and rejecting device/fifo entries; (3) using Python's built-in `filter="data"` extraction filter on 3.12+; (4) sanitizing `backup_name` before it's used to build the temp restore path. Reported privately by [Niranj R Mahaswar](https://github.com/NiranjMahaswar).
+
+### Fixed
+
+- **`delete` (GitHub storage) — `Failed to delete backup from GitHub: Expecting value: line 1 column 1 (char 0)`** — `GitHubStorage._api()` unconditionally called `json.loads()` on every API response, but GitHub's REST API returns `204 No Content` with an empty body for `DELETE /releases/{id}` and `DELETE /git/refs/tags/{tag}`, so the empty body failed JSON parsing and the delete was reported as failed (even when it actually succeeded on GitHub's side). `_api()` now returns `{}` for empty/204 responses instead of trying to parse them as JSON.
+
+### Planned
+
+- Archive encryption using a user-provided password
+- Selective restore (restore individual components instead of the full backup)
+- Backup rotation by date in addition to count-based pruning
+- Support for rclone remotes beyond Google Drive
+
+---
+
+## [1.2.3] - 2026-07-11
+
+### Fixed
+
+- Bump version in `termux-sync.py` and `__init__.py` for pip installer
+
+---
+
+## [1.2.2] - 2026-07-11
+
+### Fixed
+
+- **`restore` — stuck retrying and failing with `HTTP Error 404: Not Found` when the GitHub backend points to a private repo** — `GitHubStorage.download()` and the `manifest.json` lookup in `list_backups()` downloaded release assets via `asset["browser_download_url"]` using the standard `Accept: application/vnd.github.v3+json` header. That URL only resolves without further authentication for public repos; for private repos GitHub returns 404 even with a valid token, since the download must go through the `/repos/{repo}/releases/assets/{id}` API endpoint with `Accept: application/octet-stream`. Added `GitHubStorage._asset_headers()` and `_asset_url()` and switched both call sites to use them, so restoring from a private-repo backend now downloads correctly instead of exhausting all 8 retries. [Issues #13](https://github.com/djunekz/termux-sync/issues/13)
+
+---
+
+## [1.2.1] - 2026-05-22
+
+### Fixed
+
+- **`setup` — required fields accepted empty input silently** — pressing Enter on the `GitHub Personal Access Token` and `GitHub repo (owner/repo)` prompts passed through an empty string, which would later cause a crash or silent failure when actually running a backup or restore. Both fields are now validated in a loop that keeps prompting until a non-empty value is provided, with a descriptive error message on each failed attempt.
+  - `github_token`: re-prompts with `✗ Token cannot be empty. Paste your Personal Access Token.`
+  - `github_repo`: re-prompts with `✗ Invalid format. Use: username/repo-name` if empty or if the value does not contain exactly one `/` in a valid position
+  - `local_path`: re-prompts with `✗ Path cannot be empty.` if the user clears the default and submits nothing
+- **`setup` — existing token not acknowledged** — when a GitHub token was already saved in config, the password prompt showed an empty field with no indication that a value already existed. A hint line is now printed before the prompt: `A token is already saved. Press Enter to keep it, or paste a new one.`
+- **`KeyboardInterrupt` traceback instead of clean exit** — pressing Ctrl+C during any interactive prompt (e.g. `setup`, `schedule`, `restore`, `delete`) printed a full Python traceback instead of the intended cancellation panel. The root cause was that the `try/except KeyboardInterrupt` block only wrapped `main()` inside `if __name__ == "__main__"`, which is never executed when the script is invoked via a pip entry point or the tsctl launcher. The handler has been moved inside `main()` itself so it fires regardless of invocation method. The panel logic was extracted into a dedicated `_abort()` helper and `if __name__ == "__main__"` simplified to a bare `main()` call.
+
+---
+
+## [1.2.0] - 2026-05-22
+
+### Added
+
+- `termux-sync delete` — interactively list and permanently delete a specific backup; works across all three storage backends (local, Google Drive, GitHub Releases); requires double confirmation before deletion
+- `termux-sync clear-logs` — truncate the log file at `~/.config/termux-sync/sync.log` after a single confirmation prompt
+- `termux-sync export-config` — export current configuration to a JSON file with `github_token` and `encrypt_password` fields automatically redacted
+- `termux-sync import-config <file>` — import configuration from a previously exported file; REDACTED placeholder values are silently skipped so live credentials are never overwritten
+- `clear-cache` selective targeting — users can now enter a comma-separated list of cache directory numbers to clear only specific entries instead of always clearing all at once
+- Additional cache targets for `clear-cache`: `~/__pycache__`, `~/.gradle/caches`, `~/.m2/repository`, `~/go/pkg/mod/cache`
+- Backup manifest now records the `version` field (termux-sync version that created the backup)
+- `termux-sync list` now displays `Version`, `Compression`, and `Total size` columns per backup entry
+- `termux-sync status` now shows the stored backup count and path when using local storage
+- `termux-sync check` table now includes a `Location` column header so each row is clearly labelled
+- `GDriveStorage.delete_backup()` — new method to delete a single named backup folder from Google Drive via `rclone purge`
+- `GitHubStorage.delete_backup()` — new method to delete a single GitHub Release and its associated tag
+- `LocalStorage.delete_backup()` — new method to delete a single local backup directory
+
+### Fixed
+
+- **`create_archive()` — broken output path for files without double extensions** — the original `with_suffix().with_suffix()` chain produced incorrect filenames (e.g. `home.tar` instead of `home.tar.gz`). Replaced with a strip-then-append approach that correctly handles any input path.
+- **`create_archive()` — no compression validation** — if `cfg["compression"]` held an unrecognised value, `tarfile.open()` raised an obscure low-level exception. Compression is now validated against `{"gz", "bz2", "xz"}` and silently falls back to `gz` with a warning.
+- **`extract_archive()` — Python 3.12 deprecation** — `tf.extract(member, ..., set_attrs=True)` is deprecated in Python 3.12+. The fallback path now correctly uses `set_attrs=False` instead of repeating the same deprecated call.
+- **`human_size()` — float input crash** — repeated `/= 1024` inside the loop converted the value to a `float`, but the function signature typed the parameter as `int`. Added an `int()` cast at entry to prevent downstream type errors.
+- **`cmd_restore()` — `IndexError` on out-of-range backup number** — entering `0`, a negative number, or a number larger than the backup count raised an unhandled `IndexError`. The input is now validated against the list length with a user-friendly error message.
+- **`cmd_restore()` — temp directory leaked on early exit** — on manifest read failure or when the user rejected the checksum-failure prompt, the temporary download directory was left on disk. Now cleaned up on all early-return code paths.
+- **`cmd_schedule()` — crash on non-integer hour/minute input** — `int(Prompt.ask(...))` raised `ValueError` on non-numeric input. Both fields are now validated in a loop that keeps prompting until a valid value is entered.
+- **`GDriveStorage.delete_old()` — was a no-op** — the method body contained only `pass`, meaning old backups on Google Drive were never pruned regardless of the `max_backups` setting. Now correctly calls `rclone purge` on entries beyond `max_keep`.
+- **`LocalStorage.download()` — no existence check** — attempting to restore a backup that did not exist on disk would silently fail during the `iterdir()` call instead of raising a clear error. Now raises `FileNotFoundError` with the full path before any I/O is attempted.
+- **`LocalStorage.list_backups()` and `delete_old()` — unhandled `PermissionError`** — `iterdir()` could raise `PermissionError` on restricted directories. Both methods now catch the exception and return gracefully.
+- **`cmd_daemon()` — config not reloaded between scheduled runs** — the daemon captured `cfg` at startup and reused the same object for every subsequent backup cycle. Changes made via `termux-sync setup` required restarting the daemon to take effect. The daemon now calls `load_config()` before each backup run.
+- **`cmd_backup()` — archive checksum recorded against wrong filename** — when `create_archive()` corrected the output path, the caller still referenced the uncorrected `out_path` name in the manifest. The manifest now uses the path actually returned by `create_archive()`.
+- **`load_config()` — missing forward-compatibility for new keys** — configs saved by older versions lacked new default keys. `load_config()` now applies `setdefault()` for every key in `DEFAULT_CONFIG` so all fields are always present.
+
+### Changed
+
+- Version bumped from `1.1.2` → `1.2.0` in `termux-sync.py`, `src/termux_sync/__init__.py`, and `pyproject.toml`
+- `cmd_list()` backup table title changed from `Files Backup - N` to `Backup #N` for consistency
+
+---
+
+## [1.1.2] - 2026-05-13
+
+### Fixed
+
+- Remove urls in authors pyproject.toml - use project.urls
+- Error _tmp in `tsctl`
+- `install.sh` - bugs sync local and release version
+- `tsctl` - verified official repo
+- `install.sh` - verified install from official repo
+
+---
+
+## [1.1.1] - 2026-04-30
+
+### Added
+
+- Support installing with pypi `pip install termux-sync`
+
+### Fixed
+
+- Banner no longer appears on every command — it now shows only on `help`, `setup`, and `schedule` (interactive menus); all other commands (`backup`, `restore`, `list`, `status`, `logs`, `check`, `clear-cache`) proceed directly to output without the banner
+
+---
+
+## [1.1.0] - 2026-04-28
+
+### Added
+
+- `termux-sync check` — disk usage overview for Termux root, `~`, and `$PREFIX`; accepts an optional path argument (`check ~`, `check $PREFIX`, `check /custom/path`) with per-subfolder size breakdown
+- `termux-sync clear-cache` — interactive cache cleaner with two confirmation prompts before removing `$PREFIX/tmp`, `~/.cache`, `~/.npm`, `~/.cargo/registry`, and `~/.cargo/git`
+- `tsctl status` — show current installation status (script path, launcher, config directory, commit hash)
+- PyPI packaging support — `termux-sync` can now be installed via `pip install termux-sync` using the new `pyproject.toml`
+- GitHub Actions workflows: `ci.yml`, `codeql.yml`, `dependabot.yml`, `release-pypi.yml`
+- Automated PyPI publish on GitHub release via OIDC trusted publishing
+
+### Changed
+
+- GitHub storage chunk size increased from 20 MB to 200 MB per part, reducing the number of split files for large backups
+- `_write_daemon_script()` now resolves the script path dynamically using `__file__` instead of a hardcoded path — fixes daemon boot script when installed via `tsctl`
+- `tsctl install` now purges stale `termux-sync` aliases from `.bashrc` / `.zshrc` before writing the launcher, preventing conflicts with previous installations
+- `tsctl` shell configuration step no longer adds an alias — the `$PREFIX/bin` launcher is sufficient
+
+### Fixed
+
+- `termux-sync check` previously reported total Android filesystem size instead of Termux directory sizes
+- Stale alias from a previous install overriding the correct launcher in active shell sessions
+- Daemon boot script pointing to hardcoded development path (`~/files/project/termux-sync/termux-sync.py`)
+
+---
+
+## [1.0.0] - 2026-04-18
+
+Initial public release.
+
+### Added
+
+- `termux-sync backup` — creates a full backup of packages, home directory, `/usr/etc`, and shared libraries
+- `termux-sync restore` — interactive backup picker with SHA-256 integrity verification before extraction
+- `termux-sync list` — table view of all available backups with size and date
+- `termux-sync setup` — interactive configuration wizard for storage backend and credentials
+- `termux-sync schedule` — configure a daily auto-backup at a user-defined time
+- `termux-sync daemon` — background process that triggers scheduled backups
+- `termux-sync status` — shows current configuration and environment tool availability
+- `termux-sync logs` — displays recent log entries with color coding by level
+- Storage backend support: local filesystem, Google Drive (via rclone), GitHub private repository
+- Backup manifest (`manifest.json`) with checksums, package list, timestamp, and source paths
+- Compression options: `gz` (fast), `bz2` (balanced), `xz` (best compression)
+- Default exclusion patterns for cache directories, build artifacts, and media files
+- Configurable maximum backup count with automatic pruning of oldest backups
+- Persistent log file at `~/.config/termux-sync/sync.log`
+- Rich terminal UI with progress bars, panels, and tables
+- `install.sh` — local installer for manual setup from a cloned repository
+- `tsctl` — control tool for system-wide install, update, and uninstall via git clone
+- Termux:Boot integration via auto-generated daemon script at `~/.termux/boot/termux-sync-daemon.sh`
+- Graceful handling of Ctrl+C with cleanup of partial temporary files
+- Auto-install of `rich` dependency if not present on first run

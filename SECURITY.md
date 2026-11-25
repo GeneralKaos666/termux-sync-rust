@@ -1,0 +1,55 @@
+# Security Policy
+
+## Supported Versions
+
+Only the latest release of termux-sync receives security fixes. Older versions are not maintained.
+
+| Version | Supported |
+|---|---|
+| 1.0.x (latest) | Yes |
+| older | No |
+
+---
+
+## Reporting a Vulnerability
+
+Do not open a public GitHub issue for security vulnerabilities. Public disclosure before a fix is available puts other users at risk.
+
+To report a vulnerability, contact the maintainers privately by opening a [GitHub Security Advisory](https://github.com/GeneralKaos666/termux-sync-rust/security/advisories/new) on the repository. Describe the issue, the steps to reproduce it, and the potential impact. You will receive a response within 7 days.
+
+If a fix is possible, the maintainers will prepare a patch and coordinate a disclosure timeline with you before releasing it.
+
+---
+
+## Token and Credential Handling
+
+termux-sync stores configuration, including GitHub Personal Access Tokens, in `~/.config/termux-sync/config.json`. This file is created with `0600` permissions (owner read/write only) on your device and is only as secure as your device's filesystem.
+
+Recommendations:
+
+- Use a fine-grained token limited to the backup repository, with only the `Contents: Read and write` permission. A classic token needs the `repo` scope, which grants access to every repository you own.
+- Set a token expiration date. Rotate tokens periodically.
+- If your device is shared or compromised, revoke your tokens immediately from the GitHub settings page.
+- Do not commit your `config.json` file to any repository.
+
+Backups created by versions before 1.3.9 (or by any version without this fix) included `~/.config/termux-sync/config.json`, so any backup uploaded by those versions contains the token. If you used GitHub storage with an earlier version:
+
+- Revoke or rotate the token at [github.com/settings/tokens](https://github.com/settings/tokens), or in the fine-grained token settings.
+- Delete the old backups: the local backup folder, the Google Drive folder, and the GitHub releases in the backup repository.
+- Updating to this version only changes future archives. It does not remove copies that already left the device, and restoring an old backup restores the old configuration.
+
+Deleting `~/.config/termux-sync/config.json` is not enough on its own once an archive that contained it has been uploaded.
+
+---
+
+## Backup Security
+
+Backups are stored as plain tar archives. They are not encrypted by default.
+
+The app's own configuration directory, `~/.config/termux-sync`, is excluded from backups. This keeps the stored GitHub token out of the archive that gets uploaded.
+
+If you use GitHub as a storage backend, ensure the repository is private. A public repository will expose your home directory and configuration files to anyone.
+
+If you use local storage, ensure the backup path is on a storage volume that is not accessible to other applications.
+
+Encryption support is planned for a future release. Until then, treat your backups with the same sensitivity as the data they contain.

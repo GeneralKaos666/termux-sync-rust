@@ -1,0 +1,4 @@
+bin.name = "run-original"
+args = ["backup", "--label", "straße"]
+status.code = 0
+fs.sandbox = true

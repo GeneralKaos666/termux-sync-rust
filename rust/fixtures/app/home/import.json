@@ -1,0 +1,7 @@
+{
+  "storage": "local",
+  "local_path": "~/imported-backups",
+  "compression": "bz2",
+  "max_backups": 3,
+  "github_token": "*** REDACTED ***"
+}

@@ -1,0 +1,4 @@
+bin.name = "run-original"
+args = ["backup", "--label", "ılık ırmak"]
+status.code = 0
+fs.sandbox = true

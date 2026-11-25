@@ -1,0 +1,7 @@
+{
+  "name": "termux_backup_20250101_120000",
+  "date": "2025-01-01T12:00:00",
+  "label": "unit fixture",
+  "files": {"home": {"archive": "home.tar.gz", "size": 1, "checksum": "abc"}},
+  "packages": ["bash"]
+}

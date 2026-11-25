@@ -1,0 +1,4 @@
+bin.name = "run-original"
+args = ["logs", "--lines", "9007199254740993"]
+status.code = 0
+fs.sandbox = true

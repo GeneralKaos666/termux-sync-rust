@@ -1,0 +1,8 @@
+IMPORT CONFIG
+Load configuration from a file
+ERROR
+File not found
+日本語
+How to fix
+Check the path and try again.
+Log: ~/.config/termux-sync/sync.log

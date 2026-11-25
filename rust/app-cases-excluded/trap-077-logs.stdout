@@ -1,0 +1,12 @@
+
+ERROR
+
+Invalid usage
+
+--lines: invalid int value: '👨\u200d👩\u200d👧 family'
+
+How to fix
+Run termux-sync help to see the correct usage.
+
+
+
