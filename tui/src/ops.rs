@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
@@ -12,6 +12,12 @@ const MAX_LINE: usize = 64 * 1024;
 const LOG_LIMIT: usize = 200;
 const STDERR_LIMIT: usize = 20;
 const CANCEL_TIMEOUT: Duration = Duration::from_secs(10);
+
+enum LineRead {
+    Eof,
+    Line,
+    Oversize,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -385,13 +391,47 @@ pub fn collect_backups() -> Result<Vec<Backup>, String> {
 }
 
 pub fn supports_flag(flag: &str) -> bool {
-    data::cli_command(&[flag.to_string(), "--version".to_string()])
+    let mut command = data::cli_command(&["logs".to_string(), flag.to_string()]);
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+fn supports_flag_with(bin: &std::path::Path, flag: &str) -> bool {
+    std::process::Command::new(bin)
+        .args(["logs", flag])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn read_event_line<R: BufRead>(
+    reader: &mut R,
+    limit: usize,
+    out: &mut String,
+) -> io::Result<LineRead> {
+    out.clear();
+    let read = {
+        let mut limited = std::io::Read::take(&mut *reader, limit as u64 + 1);
+        limited.read_line(out)?
+    };
+    if read == 0 {
+        return Ok(LineRead::Eof);
+    }
+    if out.len() > limit {
+        let mut sink = String::new();
+        reader.read_line(&mut sink)?;
+        return Ok(LineRead::Oversize);
+    }
+    Ok(LineRead::Line)
 }
 
 pub fn supports_events() -> bool {
@@ -473,13 +513,12 @@ impl Operation {
                 let mut reader = BufReader::new(stdout);
                 let mut line = String::new();
                 loop {
-                    line.clear();
-                    match reader.read_line(&mut line) {
-                        Ok(0) => break,
-                        Ok(_) if line.len() > MAX_LINE => {
+                    match read_event_line(&mut reader, MAX_LINE, &mut line) {
+                        Ok(LineRead::Eof) => break,
+                        Ok(LineRead::Oversize) => {
                             let _ = tx.send(Msg::Malformed("event line exceeded 64 KiB".into()));
                         }
-                        Ok(_) => {
+                        Ok(LineRead::Line) => {
                             let message = match parse_event(line.trim_end()) {
                                 Ok(event) => Msg::Event(Box::new(event)),
                                 Err(error) => Msg::Malformed(error),
@@ -783,7 +822,11 @@ impl Operation {
 
     fn finalize_exit(&mut self) {
         let code = self.exit_status.and_then(|status| status.code());
-        if self.status == Status::Cancelled || code == Some(130) && !self.protected {
+        if self.status == Status::Cancelling {
+            self.status = Status::Cancelled;
+            return;
+        }
+        if (self.status == Status::Cancelled || code == Some(130)) && !self.protected {
             self.status = Status::Cancelled;
             return;
         }
@@ -817,7 +860,10 @@ impl Operation {
 
     pub fn request_cancel(&mut self) -> bool {
         if self.status == Status::AwaitingConfirm {
-            self.send_stdin("{\"confirm\":\"CANCEL\"}");
+            let sent = self.send_stdin("{\"confirm\":\"CANCEL\"}");
+            if sent {
+                self.cancel_sent_at = Some(Instant::now());
+            }
             self.status = Status::Cancelling;
             return true;
         }
@@ -1174,6 +1220,7 @@ mod list_event_tests {
 #[cfg(test)]
 mod fixture_tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn parses_list_fixture() {
@@ -1198,5 +1245,56 @@ mod fixture_tests {
         let parsed: Vec<_> = text.lines().map(parse_event).collect();
         assert!(parsed[0].is_err());
         assert!(parsed[1].is_ok());
+    }
+
+    #[test]
+    fn flag_probe_rejects_version_only_cli() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("fake");
+        fs::write(
+            &bin,
+            "#!/bin/sh\n[ \"$1\" = logs ] && [ \"$2\" = --json-events ] && exit 0\nexit 2\n",
+        )
+        .unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!supports_flag_with(&bin, "--bogus"));
+        assert!(supports_flag_with(&bin, "--json-events"));
+    }
+
+    #[test]
+    fn cancelling_from_confirm_arms_the_timer() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("fake");
+        fs::write(&bin, "#!/bin/sh\nread line\nsleep 5\n").unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        // Edition 2024 makes set_var unsafe; tests run single-threaded per binary.
+        unsafe { std::env::set_var("TERMUX_SYNC_BIN", &bin) };
+        let mut op = Operation::start(Kind::Backup, "x", vec!["backup".into()], false).unwrap();
+        op.status = Status::AwaitingConfirm;
+        assert!(op.request_cancel());
+        assert!(op.cancel_sent_at.is_some());
+        op.kill_forcefully();
+        let _ = op.poll();
+        unsafe { std::env::remove_var("TERMUX_SYNC_BIN") };
+    }
+
+    #[test]
+    fn oversized_line_is_drained() {
+        let mut input = vec![b'x'; 32];
+        input.push(b'\n');
+        input.extend_from_slice(b"next\n");
+        let mut reader = BufReader::new(&input[..]);
+        let mut line = String::new();
+        assert!(matches!(
+            read_event_line(&mut reader, 8, &mut line).unwrap(),
+            LineRead::Oversize
+        ));
+        assert!(matches!(
+            read_event_line(&mut reader, 8, &mut line).unwrap(),
+            LineRead::Line
+        ));
+        assert_eq!(line, "next\n");
     }
 }
