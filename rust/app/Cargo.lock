@@ -2155,6 +2155,7 @@ version = "2.0.0"
 dependencies = [
  "clap",
  "serde_json",
+ "sha2",
  "tempfile",
  "termux-sync-core",
  "termux-sync-tui",

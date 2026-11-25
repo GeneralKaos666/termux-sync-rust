@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
 use serde_json::{Map, Value, json};
@@ -48,6 +48,25 @@ fn prepare_work_dir(path: &Path) -> Result<(), String> {
     fs::create_dir(path).map_err(|error| format!("OSError: {error}"))?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
         .map_err(|error| format!("OSError: {error}"))
+}
+
+fn restore_work_dir(name: &str) -> Result<PathBuf, String> {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let dir = paths::tmp_root().join(format!("restore_{name}_{}_{}", std::process::id(), nanos));
+    prepare_work_dir(&dir)?;
+    Ok(dir)
+}
+
+fn ensure_extract_space(root: &Path, needed: u64) -> Result<(), String> {
+    let available = fs4::available_space(root).map_err(|error| format!("OSError: {error}"))?;
+    let required = needed.saturating_add(64 * 1024 * 1024);
+    if available < required {
+        return Err("termux_sync.UserError: Not enough free space".to_string());
+    }
+    Ok(())
 }
 
 pub fn get_storage(cfg: &Value) -> Result<Value, String> {
@@ -802,8 +821,7 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
         return Err("termux_sync.UserError: Invalid backup name".to_string());
     }
     let storage = Storage::from_config(cfg)?;
-    let tmp_dir = paths::tmp_root().join(format!("restore_{name}"));
-    fs::create_dir_all(&tmp_dir).map_err(|error| format!("OSError: {error}"))?;
+    let tmp_dir = restore_work_dir(&name)?;
 
     events::emit(
         "start",
@@ -1061,6 +1079,32 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
 
     let roots = restore_roots();
     let mut failed_archives = Vec::new();
+    let needed: u64 = size.max(0) as u64;
+    let mut checked_roots: Vec<&Path> = Vec::new();
+    for key in files.keys() {
+        let Some((root, _)) = roots.get(key.as_str()) else {
+            continue;
+        };
+        if checked_roots.contains(&root.as_path()) {
+            continue;
+        }
+        if let Err(error) = ensure_extract_space(root, needed) {
+            cleanup(&tmp_dir);
+            events::emit(
+                "error",
+                vec![
+                    ("message", Value::String(error.clone())),
+                    (
+                        "hint",
+                        Value::String("Free some space and try again.".to_string()),
+                    ),
+                    ("exit_code", Value::from(1)),
+                ],
+            );
+            return Err(error);
+        }
+        checked_roots.push(root.as_path());
+    }
     for (key, info) in &files {
         let stage_id = format!("extract:{key}");
         let stage_label = if key == "home" {
@@ -1089,7 +1133,27 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
         );
         let archive_name = info.get("archive").map(text::py_str).unwrap_or_default();
         if manifest::clean_backup_name(&archive_name) != archive_name {
-            failed_archives.push(archive_name);
+            failed_archives.push(archive_name.clone());
+            events::emit(
+                "log",
+                vec![
+                    ("level", Value::String("ERROR".to_string())),
+                    (
+                        "message",
+                        Value::String(format!("Invalid archive name in manifest: {archive_name}")),
+                    ),
+                ],
+            );
+            events::emit(
+                "stage",
+                vec![
+                    ("id", Value::String(stage_id.clone())),
+                    ("label", Value::String(stage_label.to_string())),
+                    ("state", Value::String("failed".to_string())),
+                    ("index", Value::from(stage_index)),
+                    ("total", Value::from(TOTAL_STAGES)),
+                ],
+            );
             continue;
         }
         let Some((root, top)) = roots.get(key.as_str()) else {
@@ -1112,11 +1176,12 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
                 false,
             );
         };
+        let budget = info.get("size").and_then(fmt::py_int).unwrap_or(0).max(0) as u64;
         match archive::extract_archive(
             &tmp_dir.join(&archive_name),
             root,
             Some(top),
-            None,
+            Some(budget + 64 * 1024 * 1024),
             &mut on_member,
         ) {
             Ok(result) => {
@@ -1129,16 +1194,42 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
                         ],
                     );
                 }
-                events::emit(
-                    "stage",
-                    vec![
-                        ("id", Value::String(stage_id)),
-                        ("label", Value::String(stage_label.to_string())),
-                        ("state", Value::String("complete".to_string())),
-                        ("index", Value::from(stage_index)),
-                        ("total", Value::from(TOTAL_STAGES)),
-                    ],
-                );
+                if result.extracted == 0 {
+                    failed_archives.push(archive_name.clone());
+                    events::emit(
+                        "log",
+                        vec![
+                            ("level", Value::String("ERROR".to_string())),
+                            (
+                                "message",
+                                Value::String(format!(
+                                    "Archive extracted no entries and may be corrupt: {archive_name}"
+                                )),
+                            ),
+                        ],
+                    );
+                    events::emit(
+                        "stage",
+                        vec![
+                            ("id", Value::String(stage_id)),
+                            ("label", Value::String(stage_label.to_string())),
+                            ("state", Value::String("failed".to_string())),
+                            ("index", Value::from(stage_index)),
+                            ("total", Value::from(TOTAL_STAGES)),
+                        ],
+                    );
+                } else {
+                    events::emit(
+                        "stage",
+                        vec![
+                            ("id", Value::String(stage_id)),
+                            ("label", Value::String(stage_label.to_string())),
+                            ("state", Value::String("complete".to_string())),
+                            ("index", Value::from(stage_index)),
+                            ("total", Value::from(TOTAL_STAGES)),
+                        ],
+                    );
+                }
             }
             Err(error) => {
                 failed_archives.push(archive_name.clone());
@@ -1164,6 +1255,22 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
                 );
             }
         }
+    }
+
+    if !failed_archives.is_empty() {
+        events::emit(
+            "result",
+            vec![
+                ("ok", Value::Bool(false)),
+                ("name", Value::String(name.clone())),
+                ("warnings", Value::from(failed_archives.clone())),
+            ],
+        );
+        cleanup(&tmp_dir);
+        return Err(format!(
+            "RuntimeError: Restore incomplete; failed archives: {}",
+            failed_archives.join(", ")
+        ));
     }
 
     let package_failures = if backup_packages.is_empty() {
@@ -1225,6 +1332,7 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
         ],
     );
 
+    let warnings = !package_failures.is_empty() || !failed_archives.is_empty();
     events::emit(
         "result",
         vec![
@@ -1251,7 +1359,7 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
                 "archives_failed",
                 Value::Array(failed_archives.into_iter().map(Value::String).collect()),
             ),
-            ("warnings", Value::Bool(!package_failures.is_empty())),
+            ("warnings", Value::Bool(warnings)),
             ("restart_required", Value::Bool(true)),
             (
                 "duration_ms",

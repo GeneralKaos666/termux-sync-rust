@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 struct Fixture {
     temp: tempfile::TempDir,
@@ -142,6 +143,32 @@ impl Fixture {
             }
         }
         panic!("backup result event missing");
+    }
+
+    fn write_corrupt_backup(&self, name: &str) {
+        let dir = self.home.join("backups").join(name);
+        fs::create_dir_all(&dir).unwrap();
+        let corrupt = b"not a tar";
+        fs::write(dir.join("home.tar.gz"), corrupt).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(corrupt);
+        let checksum = format!("{:x}", hasher.finalize());
+        let manifest = serde_json::json!({
+            "name": name,
+            "files": {
+                "home": {
+                    "archive": "home.tar.gz",
+                    "size": corrupt.len(),
+                    "checksum": checksum,
+                }
+            },
+            "packages": [],
+        });
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
     }
 }
 
@@ -317,4 +344,16 @@ fn backup_fails_when_an_archive_fails() {
     );
     assert!(!out.status.success(), "backup reported success");
     assert!(String::from_utf8_lossy(&out.stdout).contains("Failed to archive"));
+}
+
+#[test]
+fn restore_fails_when_extraction_fails() {
+    let fx = Fixture::new();
+    fx.write_corrupt_backup("termux_backup_bad");
+    let out = fx.run(
+        &["--json-events", "restore", "--name", "termux_backup_bad"],
+        Some("{\"confirm\":\"RESTORE\"}\n"),
+    );
+    assert!(!out.status.success(), "restore reported success");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\"ok\":false"));
 }
