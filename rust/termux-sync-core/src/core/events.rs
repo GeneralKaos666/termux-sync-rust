@@ -65,6 +65,15 @@ fn redact_text(text: &str, secrets: &[String]) -> String {
     out
 }
 
+pub fn redact_message(message: &str) -> String {
+    let secrets = events()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|state| state.secrets.clone()))
+        .unwrap_or_default();
+    redact_text(message, &secrets)
+}
+
 fn redact(value: Value, secrets: &[String]) -> Value {
     match value {
         Value::String(text) => Value::String(redact_text(&text, secrets)),
@@ -180,4 +189,15 @@ pub fn confirmation() -> bool {
         .map(crate::core::text::py_str)
         .map(|text| crate::core::text::py_strip(&text) == "RESTORE")
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_messages_are_redacted() {
+        set_secrets(vec!["secret-token".to_string()]);
+        assert_eq!(redact_message("token=secret-token"), "token=***");
+    }
 }

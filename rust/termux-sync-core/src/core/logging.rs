@@ -12,6 +12,7 @@ use crate::core::paths;
 pub fn log(level: &str, message: &str) {
     let dir = paths::config_dir();
     let _ = fs::create_dir_all(&dir);
+    let message = events::redact_message(message);
     let stamp = Local::now().format("%Y-%m-%d %H:%M:%S");
     let level = level.to_uppercase();
     if let Ok(mut file) = OpenOptions::new()
@@ -25,7 +26,7 @@ pub fn log(level: &str, message: &str) {
         "log",
         vec![
             ("level", Value::String(level)),
-            ("message", Value::String(message.to_string())),
+            ("message", Value::String(message)),
         ],
     );
 }
