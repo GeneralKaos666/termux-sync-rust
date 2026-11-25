@@ -24,7 +24,7 @@ run_case() {
     local name="$1" mode="$2" feed="$3"
     local out="$TMP/$name.out"
     set +e
-    ( eval "$feed" ) | HOME="$TMP/home" TEST_MODE="$mode" TERMUX_SYNC_BIN="$FAKE" \
+    ( trap '' PIPE; eval "$feed" || true ) 2>/dev/null | HOME="$TMP/home" TEST_MODE="$mode" TERMUX_SYNC_BIN="$FAKE" \
         timeout 15 script -qec "stty rows 24 cols 90; $BIN" /dev/null >"$out" 2>&1
     status=$?
     set -e
@@ -40,9 +40,9 @@ run_case() {
     printf 'captured %s bytes\n' "$(wc -c <"$out")"
 }
 
-feed_backup='sleep 1; printf "\r"; sleep 0.3; printf "\r"; sleep 1.2; printf "\033"; sleep 0.3; printf "q"'
-feed_cancel='sleep 1; printf "\r"; sleep 0.3; printf "\r"; sleep 0.6; printf "\033"; sleep 0.4; printf "\r"; sleep 1.0; printf "\033"; sleep 0.3; printf "q"'
-feed_restore='sleep 1; printf "\t"; sleep 0.2; printf "\r"; sleep 1.0; printf "RESTORE"; sleep 0.2; printf "\r"; sleep 1.2; printf "\033"; sleep 0.3; printf "q"'
+feed_backup='sleep 1; printf "\r"; sleep 0.3; printf "\r"; sleep 1.2; printf "\033"; sleep 0.3; printf "q"; sleep 0.3; printf "q"'
+feed_cancel='sleep 1; printf "\r"; sleep 0.3; printf "\r"; sleep 1.2; printf "\003"; sleep 1.5; for _ in 1 2 3 4; do printf "q"; sleep 0.4; done'
+feed_restore='sleep 1; printf "j"; sleep 0.2; printf "\r"; sleep 1.0; printf "RESTORE"; sleep 0.2; printf "\r"; sleep 1.2; printf "\033"; sleep 0.3; printf "q"; sleep 0.3; printf "q"'
 
 run_case backup-ok backup-ok "$feed_backup"
 grep -q "SUCCESS" "$TMP/backup-ok.out"
@@ -57,17 +57,17 @@ run_case restore-plan restore-plan "$feed_restore"
 grep -q "Close and reopen Termux" "$TMP/restore-plan.out"
 printf 'restore-plan: assertions passed\n'
 
-feed_old='sleep 1; printf "L"; sleep 1.0; printf "q"'
+feed_old='sleep 1; printf "L"; sleep 1.0; printf "q"; sleep 0.3; printf "q"'
 run_case old-list old-cli "$feed_old"
 plain "$TMP/old-list.out" | tr -d '\n' | grep -Eq "old.*list.*output"
 printf 'old-list: assertions passed\n'
 
-feed_status='sleep 1; printf "s"; sleep 0.5; printf "\033"; sleep 0.3; printf "q"'
+feed_status='sleep 1; printf "s"; sleep 0.5; printf "\033"; sleep 0.3; printf "q"; sleep 0.3; printf "q"'
 run_case status status "$feed_status"
 plain "$TMP/status.out" | tr -d '\n' | grep -q "STATUS"
 printf 'status: assertions passed\n'
 
-feed_protected='sleep 1; printf "\t"; sleep 0.2; printf "\r"; sleep 1.0; printf "RESTORE"; sleep 0.2; printf "\r"; sleep 1.2; printf "\033"; sleep 2.5; printf "\033"; sleep 0.3; printf "q"'
+feed_protected='sleep 1; printf "j"; sleep 0.2; printf "\r"; sleep 1.0; printf "RESTORE"; sleep 0.2; printf "\r"; sleep 1.2; printf "\033"; sleep 2.5; printf "\033"; sleep 0.3; printf "q"; sleep 0.3; printf "q"'
 run_case restore-protected restore-protected "$feed_protected"
 plain "$TMP/restore-protected.out" | tr -d '\n' | grep -q "CANNOT"
 plain "$TMP/restore-protected.out" | tr -d '\n' | grep -q "reopen Termux"

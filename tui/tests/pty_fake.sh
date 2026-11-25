@@ -11,7 +11,7 @@ if [[ "${TEST_MODE:-}" == "old-cli" ]]; then
 fi
 
 case " $* " in
-    *" --version "*) exit 0 ;;
+    *" --version "* | *" logs "*) exit 0 ;;
 esac
 
 case "${TEST_MODE:-}" in
