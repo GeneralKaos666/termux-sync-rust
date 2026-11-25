@@ -600,14 +600,7 @@ pub fn status(cfg: &Value) -> Result<Value, String> {
     ));
     render::print_line("");
     render::print_line("  Environment");
-    for (name, needed) in [
-        ("python3", true),
-        ("dpkg", true),
-        ("tar", true),
-        ("rclone", storage == "gdrive"),
-        ("git", true),
-        ("curl", true),
-    ] {
+    for (name, needed) in fsutil::required_tools(&storage) {
         match fsutil::which(name) {
             Some(path) => render::print_line(&format!(
                 "    {name:<8} ✓  {}",

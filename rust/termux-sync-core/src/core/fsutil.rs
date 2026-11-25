@@ -38,6 +38,14 @@ pub fn remove_tree_ignore(path: &Path) {
     let _ = fs::remove_dir_all(path);
 }
 
+pub fn required_tools(storage: &str) -> Vec<(&'static str, bool)> {
+    let mut tools = vec![("dpkg", true)];
+    if storage == "gdrive" {
+        tools.push(("rclone", true));
+    }
+    tools
+}
+
 pub fn try_lock_exclusive(path: &Path) -> Result<File, String> {
     let file = OpenOptions::new()
         .create(true)
@@ -68,5 +76,19 @@ mod tests {
         assert!(try_lock_exclusive(&path).is_err());
         drop(first);
         assert!(try_lock_exclusive(&path).is_ok());
+    }
+
+    #[test]
+    fn only_rust_tools_are_required() {
+        let local: Vec<_> = required_tools("local")
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(local, vec!["dpkg"]);
+        let gdrive: Vec<_> = required_tools("gdrive")
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(gdrive, vec!["dpkg", "rclone"]);
     }
 }

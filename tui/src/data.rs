@@ -440,15 +440,7 @@ pub fn which_in(name: &str, paths: &[PathBuf]) -> Option<PathBuf> {
 }
 
 pub fn probe_tools(storage: &str, paths: &[PathBuf]) -> Vec<ToolStatus> {
-    let entries = [
-        ("python3", true),
-        ("dpkg", true),
-        ("tar", true),
-        ("rclone", storage == "gdrive"),
-        ("git", true),
-        ("curl", true),
-    ];
-    entries
+    termux_sync_core::core::fsutil::required_tools(storage)
         .into_iter()
         .map(|(name, required)| ToolStatus {
             name,
@@ -662,13 +654,7 @@ mod tests {
     fn probe_tools_requires_rclone_only_for_gdrive() {
         let local = probe_tools("local", &[]);
         assert!(local.iter().all(|tool| tool.path.is_none()));
-        assert!(
-            !local
-                .iter()
-                .find(|tool| tool.name == "rclone")
-                .unwrap()
-                .required
-        );
+        assert!(local.iter().all(|tool| tool.name != "rclone"));
 
         let drive = probe_tools("gdrive", &[]);
         assert!(
@@ -809,5 +795,19 @@ mod tests {
     #[test]
     fn ansi_sequences_are_removed() {
         assert_eq!(strip_ansi("\u{1b}[31mred\u{1b}[0m text"), "red text");
+    }
+}
+
+#[cfg(test)]
+mod task11_tests {
+    use super::*;
+
+    #[test]
+    fn probe_tools_omits_python_and_tar() {
+        let tools = probe_tools("local", &[]);
+        assert!(tools.iter().all(|tool| tool.name != "python3"));
+        assert!(tools.iter().all(|tool| tool.name != "tar"));
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "dpkg");
     }
 }
