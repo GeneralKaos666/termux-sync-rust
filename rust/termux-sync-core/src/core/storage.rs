@@ -45,14 +45,30 @@ impl LocalStorage {
                     .to_string(),
             );
         }
-        fs::create_dir_all(&dest).map_err(|error| format!("OSError: {error}"))?;
+        let staging = self
+            .root
+            .join(format!(".{backup_name}.upload-{}", std::process::id()));
+        let result = self.stage_upload(backup_dir, &staging, &dest);
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&staging);
+        }
+        result
+    }
+
+    fn stage_upload(
+        &self,
+        backup_dir: &Path,
+        staging: &Path,
+        dest: &Path,
+    ) -> Result<UploadResult, String> {
+        fs::create_dir_all(staging).map_err(|error| format!("OSError: {error}"))?;
         let mut files: Vec<PathBuf> = fs::read_dir(backup_dir)
             .map_err(|error| format!("OSError: {error}"))?
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| path.is_file())
             .collect();
-        files.sort();
+        upload_order(&mut files);
         let total: u64 = files
             .iter()
             .filter_map(|path| fs::metadata(path).ok())
@@ -65,7 +81,7 @@ impl LocalStorage {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let target = dest.join(&name);
+            let target = staging.join(&name);
             let checksum = copy_with_sha(&source, &target)?;
             checksums.push((name.clone(), checksum));
             done += fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
@@ -80,6 +96,7 @@ impl LocalStorage {
                 ],
             );
         }
+        fs::rename(staging, dest).map_err(|error| format!("OSError: {error}"))?;
         Ok(UploadResult {
             location: dest.to_string_lossy().into_owned(),
             checksums,
@@ -158,12 +175,12 @@ impl LocalStorage {
         Ok(())
     }
 
-    pub fn delete_old(&self, max_keep: i64) {
+    pub fn delete_old(&self, max_keep: i64) -> Result<(), String> {
         if !self.root.exists() {
-            return;
+            return Ok(());
         }
         let Ok(entries) = fs::read_dir(&self.root) else {
-            return;
+            return Ok(());
         };
         let mut dirs: Vec<(PathBuf, std::time::SystemTime)> = entries
             .flatten()
@@ -177,9 +194,18 @@ impl LocalStorage {
             })
             .collect();
         dirs.sort_by_key(|item| std::cmp::Reverse(item.1));
-        let keep = max_keep.max(0) as usize;
+        let keep = max_keep.max(1) as usize;
+        let mut first_error = None;
         for (path, _) in dirs.into_iter().skip(keep) {
-            let _ = fs::remove_dir_all(path);
+            if let Err(error) = fs::remove_dir_all(&path)
+                && first_error.is_none()
+            {
+                first_error = Some(format!("OSError: {error}"));
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
         }
     }
 
@@ -197,6 +223,18 @@ impl LocalStorage {
         }
         fs::remove_dir_all(target).map_err(|error| format!("OSError: {error}"))
     }
+}
+
+fn upload_order(files: &mut [PathBuf]) {
+    files.sort_by(|left, right| {
+        let left_manifest = left.file_name().is_some_and(|name| name == "manifest.json");
+        let right_manifest = right
+            .file_name()
+            .is_some_and(|name| name == "manifest.json");
+        left_manifest
+            .cmp(&right_manifest)
+            .then_with(|| left.cmp(right))
+    });
 }
 
 fn is_backup_dir(path: &Path) -> bool {
@@ -325,7 +363,9 @@ impl Storage {
             "local" => Ok(Self::Local(LocalStorage::new(cfg))),
             "gdrive" => Ok(Self::Rclone(RcloneStorage::new(cfg)?)),
             "github" => Ok(Self::GitHub(GitHubStorage::new(cfg)?)),
-            _ => Ok(Self::Local(LocalStorage::new(cfg))),
+            other => Err(format!(
+                "termux_sync.UserError: Unknown storage backend: {other:?}"
+            )),
         }
     }
 
@@ -382,11 +422,15 @@ impl Storage {
         }
     }
 
-    pub fn delete_old(&self, max_keep: i64) {
+    pub fn delete_old(&self, max_keep: i64) -> Result<(), String> {
         match self {
             Self::Local(local) => local.delete_old(max_keep),
             Self::Rclone(rclone) => rclone.delete_old(max_keep),
-            Self::GitHub(github) => github.delete_old(max_keep),
+            Self::GitHub(github) => {
+                // Placeholder until Task 7 makes GitHub pruning fallible.
+                github.delete_old(max_keep);
+                Ok(())
+            }
         }
     }
 
@@ -437,8 +481,14 @@ mod tests {
         let files = manifest.get("files").unwrap();
         let (ok, _) = verify_local_backup(Path::new(&uploaded.location), files);
         assert!(ok);
-        local.delete_old(0);
-        assert!(local.list_backups().is_empty());
+        let second = temp.path().join("second");
+        make_backup(&second);
+        local
+            .upload(&second, "termux_backup_20250101_130000")
+            .unwrap();
+        assert_eq!(local.list_backups().len(), 2);
+        local.delete_old(1).unwrap();
+        assert_eq!(local.list_backups().len(), 1);
     }
 
     #[test]
@@ -448,5 +498,62 @@ mod tests {
         fs::write(&path, b"x").unwrap();
         let error = copy_with_sha(&path, &path).unwrap_err();
         assert!(error.contains("SameFileError"));
+    }
+
+    #[test]
+    fn upload_is_atomic_on_copy_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("backups");
+        let work = temp.path().join("work");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&work).unwrap();
+        fs::write(work.join("home.tar.gz"), b"data").unwrap();
+        fs::write(work.join("manifest.json"), b"{}").unwrap();
+        fs::set_permissions(work.join("home.tar.gz"), fs::Permissions::from_mode(0o000)).unwrap();
+        let cfg = json!({"storage": "local", "local_path": root.to_string_lossy()});
+        let storage = LocalStorage::new(&cfg);
+        assert!(storage.upload(&work, "termux_backup_x").is_err());
+        assert!(!root.join("termux_backup_x").exists());
+        let leftovers: Vec<_> = fs::read_dir(&root).unwrap().flatten().collect();
+        assert!(leftovers.is_empty());
+    }
+
+    #[test]
+    fn upload_places_manifest_last() {
+        let mut files: Vec<PathBuf> = ["manifest.json", "usr_etc.tar.gz", "home.tar.gz"]
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        upload_order(&mut files);
+        assert_eq!(files.last().unwrap(), Path::new("manifest.json"));
+    }
+
+    #[test]
+    fn delete_old_keeps_at_least_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("backups");
+        fs::create_dir_all(&root).unwrap();
+        for name in ["termux_backup_a", "termux_backup_b", "termux_backup_c"] {
+            let dir = root.join(name);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("manifest.json"), format!(r#"{{"name":"{name}"}}"#)).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let cfg = json!({"storage": "local", "local_path": root.to_string_lossy()});
+        LocalStorage::new(&cfg).delete_old(0).unwrap();
+        let remaining: Vec<String> = fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(remaining, vec!["termux_backup_c".to_string()]);
+    }
+
+    #[test]
+    fn unknown_storage_is_an_error() {
+        let err = Storage::from_config(&json!({"storage": "dropbox"}))
+            .err()
+            .expect("unknown backend must not fall back");
+        assert!(err.contains("Unknown storage backend"));
     }
 }

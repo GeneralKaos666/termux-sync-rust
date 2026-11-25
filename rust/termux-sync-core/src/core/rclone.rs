@@ -167,18 +167,18 @@ impl RcloneStorage {
         Ok(())
     }
 
-    pub fn delete_old(&self, max_keep: i64) {
+    pub fn delete_old(&self, max_keep: i64) -> Result<(), String> {
         let Ok(output) = self.run(&["lsjson", &self.remote_path(""), "--dirs-only"]) else {
-            return;
+            return Ok(());
         };
         if !output.status.success() {
-            return;
+            return Ok(());
         }
         let Ok(items) = serde_json::from_slice::<Value>(&output.stdout) else {
-            return;
+            return Ok(());
         };
         let Some(items) = items.as_array() else {
-            return;
+            return Ok(());
         };
         let mut sorted = items.clone();
         sorted.sort_by(|left, right| {
@@ -191,6 +191,7 @@ impl RcloneStorage {
             let name = item.get("Name").map(text::py_str).unwrap_or_default();
             let _ = self.run(&["purge", &self.remote_path(&name)]);
         }
+        Ok(())
     }
 
     pub fn delete_backup(&self, backup_name: &str) -> Result<(), String> {
@@ -264,7 +265,7 @@ esac
                 .unwrap()
                 .contains("termux-sync-gdrive:")
         );
-        storage.delete_old(0);
+        storage.delete_old(0).unwrap();
         assert!(
             storage
                 .delete_backup("termux_backup_20250101_120000")

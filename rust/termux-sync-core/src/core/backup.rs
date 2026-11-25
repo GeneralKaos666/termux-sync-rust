@@ -576,7 +576,7 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
         }
     };
     let location = uploaded.location;
-    storage.delete_old(cfg.get("max_backups").and_then(fmt::py_int).unwrap_or(5));
+    storage.delete_old(cfg.get("max_backups").and_then(fmt::py_int).unwrap_or(5))?;
 
     events::emit(
         "stage",
