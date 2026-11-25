@@ -575,3 +575,26 @@ fn flag_before_tui_is_not_silent_success() {
     let out = fx.run(&["--debug", "tui"], None);
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn debug_flag_shows_trace_lines() {
+    let fx = Fixture::new();
+    fs::write(
+        fx.home.join(".config/termux-sync/sync.log"),
+        "[2026-01-01 00:00:00] [TRACE] detail\n",
+    )
+    .unwrap();
+    let plain = fx.run(&["logs"], None);
+    assert!(!String::from_utf8_lossy(&plain.stdout).contains("[TRACE] detail"));
+    let debug = fx.run(&["--debug", "logs"], None);
+    assert!(String::from_utf8_lossy(&debug.stdout).contains("[TRACE] detail"));
+}
+
+#[test]
+fn update_hint_uses_install_script() {
+    let fx = Fixture::new();
+    let out = fx.run(&["update"], None);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("bash install.sh"));
+    assert!(!text.contains("tsctl"));
+}

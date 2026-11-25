@@ -83,6 +83,11 @@ pub fn set_secrets(cfg: Value) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
+pub fn set_debug(enabled: bool) -> Result<Value, String> {
+    maintenance::set_debug(enabled);
+    Ok(Value::Null)
+}
+
 /// Port of `print_error` (`src/termux_sync/__init__.py:391`).
 pub fn print_error(
     title: String,

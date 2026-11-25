@@ -3,6 +3,7 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::{Local, Timelike};
@@ -20,10 +21,17 @@ use crate::core::render;
 use crate::core::storage::Storage;
 use crate::core::text;
 
+static DEBUG: AtomicBool = AtomicBool::new(false);
+
+pub fn set_debug(enabled: bool) {
+    DEBUG.store(enabled, Ordering::Relaxed);
+}
+
 fn debug_enabled() -> bool {
-    env::var("TERMUX_SYNC_DEBUG")
-        .map(|value| !value.is_empty())
-        .unwrap_or(false)
+    DEBUG.load(Ordering::Relaxed)
+        || env::var("TERMUX_SYNC_DEBUG")
+            .map(|value| !value.is_empty())
+            .unwrap_or(false)
 }
 
 fn cfg_string(cfg: &Value, key: &str, default: &str) -> String {

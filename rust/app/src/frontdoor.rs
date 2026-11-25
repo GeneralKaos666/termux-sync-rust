@@ -74,11 +74,10 @@ fn usage(message: &str) -> ExitCode {
 
 fn unknown(command: &str) -> ExitCode {
     let hints = match command {
-        "update" => "termux-sync has no built-in update command. Use tsctl updater to update.",
-        "upgrade" => "To update, use tsctl updater.",
-        "install" => "To install or reinstall, use the install script, or tsctl.",
+        "update" | "upgrade" => "To update: git pull --ff-only && bash install.sh",
+        "install" => "To install or reinstall: bash install.sh",
         "remove" => {
-            "To delete a backup use termux-sync delete. To uninstall the tool use tsctl uninstall."
+            "To delete a backup use termux-sync delete. To uninstall, delete the two binaries from $PREFIX/bin."
         }
         "config" => "Use termux-sync setup to change settings, or termux-sync status to view them.",
         "sync" => "Use termux-sync backup to upload, or termux-sync restore to download.",
@@ -198,6 +197,9 @@ pub fn run_from_argv() -> ExitCode {
         }
     }
 
+    if opts.debug {
+        let _ = port::set_debug(true);
+    }
     if version {
         println!("termux-sync v{}", termux_sync_core::core::paths::VERSION);
         return ExitCode::SUCCESS;
