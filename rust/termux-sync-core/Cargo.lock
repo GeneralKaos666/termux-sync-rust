@@ -910,6 +910,7 @@ dependencies = [
  "flate2",
  "fs4",
  "regex",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

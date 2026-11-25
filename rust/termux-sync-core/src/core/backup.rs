@@ -1090,6 +1090,7 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
             &tmp_dir.join(&archive_name),
             root,
             Some(top),
+            None,
             &mut on_member,
         ) {
             Ok(result) => {

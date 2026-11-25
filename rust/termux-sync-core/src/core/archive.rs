@@ -5,11 +5,13 @@
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt, symlink};
 use std::path::{Component, Path, PathBuf};
+
+use rustix::fs::{Mode, OFlags, open};
 
 use bzip2::Compression as BzCompression;
 use bzip2::read::MultiBzDecoder;
@@ -67,6 +69,9 @@ pub struct ExtractResult {
     pub warnings: Vec<String>,
 }
 
+/// Hard error once an archive's file data would exceed the configured budget.
+const SIZE_LIMIT_ERROR: &str = "Archive exceeds size limit";
+
 fn exclude_prefix(pattern: &str) -> String {
     let mut pat = pattern.trim();
     while let Some(rest) = pat.strip_prefix("./") {
@@ -94,8 +99,19 @@ fn excluded(arc: &Path, excludes: &[String]) -> bool {
 }
 
 /// Add read/execute bits to unreadable entries so one file cannot abort a backup.
-/// Returns the original modes, newest last; caller restores them in reverse.
-fn unlock_tree(root: &Path) -> Vec<(PathBuf, u32)> {
+/// The returned guard restores the original modes on drop.
+struct UnlockGuard {
+    changed: Vec<(PathBuf, u32)>,
+}
+
+impl Drop for UnlockGuard {
+    fn drop(&mut self) {
+        relock(std::mem::take(&mut self.changed));
+    }
+}
+
+fn unlock_tree(root: &Path, excludes: &[String]) -> UnlockGuard {
+    let wrapped = wrapped_excludes(excludes);
     let mut changed = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(path) = stack.pop() {
@@ -104,6 +120,12 @@ fn unlock_tree(root: &Path) -> Vec<(PathBuf, u32)> {
         };
         if meta.file_type().is_symlink() {
             continue;
+        }
+        if !wrapped.is_empty() {
+            let rel = path.strip_prefix(root).unwrap_or(path.as_path());
+            if excluded(rel, &wrapped) {
+                continue;
+            }
         }
         let mode = meta.permissions().mode();
         if meta.is_dir() {
@@ -129,7 +151,7 @@ fn unlock_tree(root: &Path) -> Vec<(PathBuf, u32)> {
             }
         }
     }
-    changed
+    UnlockGuard { changed }
 }
 
 fn relock(changed: Vec<(PathBuf, u32)>) {
@@ -165,10 +187,8 @@ pub fn create_archive_to_writer<W: Write>(
     options: &ArchiveOptions,
     on_member: &mut dyn FnMut(&Path, u64),
 ) -> Result<W, String> {
-    let changed = unlock_tree(source);
-    let result = write_archive(source, sink, options, on_member);
-    relock(changed);
-    result
+    let _guard = unlock_tree(source, &options.excludes);
+    write_archive(source, sink, options, on_member)
 }
 
 fn write_archive<W: Write>(
@@ -256,11 +276,11 @@ fn fill_archive<W: Write>(
         let Ok(meta) = fs::symlink_metadata(&path) else {
             continue;
         };
-        let size = if meta.is_file() { meta.len() } else { 0 };
-        on_member(&arc, size);
         if !excludes.is_empty() && excluded(&arc, &excludes) {
             continue;
         }
+        let size = if meta.is_file() { meta.len() } else { 0 };
+        on_member(&arc, size);
         let file_type = meta.file_type();
         if file_type.is_dir() {
             builder
@@ -372,8 +392,10 @@ fn first_component(path: &Path) -> Option<&OsStr> {
     })
 }
 
+/// `root` must already be resolved (see `extract_archive`); only `path` is
+/// resolved here to avoid re-statting every component of `root` per member.
 fn inside(path: &Path, root: &Path) -> bool {
-    paths::is_within(&paths::resolve_lenient(path), &paths::resolve_lenient(root))
+    paths::is_within(&paths::resolve_lenient(path), root)
 }
 
 fn check_member_root(
@@ -381,6 +403,7 @@ fn check_member_root(
     target: &Path,
     dest: &Path,
     expected_top: Option<&str>,
+    entry_type: EntryType,
 ) -> Result<(), String> {
     let Some(top) = expected_top else {
         return Ok(());
@@ -395,6 +418,11 @@ fn check_member_root(
             "Archive member outside expected root {top:?}: {rel:?}"
         ));
     }
+    if entry_type.is_file() && normalized_relative(rel) == Path::new(top) {
+        return Err(format!(
+            "Archive member replaces expected root {top:?}: {rel:?}"
+        ));
+    }
     let jail = dest.join(top);
     if !inside(target, &jail) {
         return Err(format!("Archive member escapes {top:?}: {rel:?}"));
@@ -403,6 +431,9 @@ fn check_member_root(
 }
 
 fn filtered_mode(entry_type: EntryType, mode: u32) -> u32 {
+    if entry_type.is_dir() {
+        return mode & 0o777;
+    }
     let mut mode = mode & 0o755;
     if entry_type.is_file() || entry_type.is_hard_link() {
         if mode & 0o100 == 0 {
@@ -439,30 +470,44 @@ fn create_regular(
     target: &Path,
     mode: u32,
     mtime: i64,
+    budget: &mut u64,
 ) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("OSError: {error}"))?;
     }
+    if fs::symlink_metadata(target).is_ok_and(|meta| meta.is_dir()) {
+        return Err(format!(
+            "Refusing to replace directory with file: {}",
+            target.display()
+        ));
+    }
     remove_existing(target);
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(target)
+    let fd = open(
+        target,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC | OFlags::NOFOLLOW,
+        Mode::from_raw_mode(mode),
+    )
+    .map_err(|error| format!("OSError: {error}"))?;
+    let mut file = File::from(fd);
+    let copied = std::io::copy(&mut entry.take(budget.saturating_add(1)), &mut file)
         .map_err(|error| format!("OSError: {error}"))?;
-    std::io::copy(entry, &mut file).map_err(|error| format!("OSError: {error}"))?;
+    if copied > *budget {
+        return Err(SIZE_LIMIT_ERROR.to_string());
+    }
+    *budget -= copied;
     let _ = fs::set_permissions(target, fs::Permissions::from_mode(mode));
     set_mtime(target, mtime);
     Ok(())
 }
 
-fn create_dir(target: &Path, mtime: i64) -> Result<(), String> {
+fn create_dir(target: &Path, mode: u32, mtime: i64) -> Result<(), String> {
     if let Ok(meta) = fs::symlink_metadata(target)
         && meta.file_type().is_symlink()
     {
         let _ = fs::remove_file(target);
     }
     fs::create_dir_all(target).map_err(|error| format!("OSError: {error}"))?;
+    let _ = fs::set_permissions(target, fs::Permissions::from_mode(mode));
     set_mtime(target, mtime);
     Ok(())
 }
@@ -509,16 +554,25 @@ pub fn extract_archive(
     archive_path: &Path,
     dest: &Path,
     expected_top: Option<&str>,
+    max_bytes: Option<u64>,
     on_member: &mut dyn FnMut(&Path),
 ) -> Result<ExtractResult, String> {
-    fs::create_dir_all(dest).map_err(|error| format!("OSError: {error}"))?;
+    let dest = paths::resolve_lenient(dest);
+    fs::create_dir_all(&dest).map_err(|error| format!("OSError: {error}"))?;
     let reader = source_reader(archive_path)?;
     let mut archive = tar::Archive::new(reader);
     let mut result = ExtractResult::default();
+    let mut budget = max_bytes.unwrap_or(u64::MAX);
+    let mut entries_seen = 0usize;
+    let mut pending_links: Vec<(PathBuf, PathBuf, i64)> = Vec::new();
     let entries = archive
         .entries()
         .map_err(|error| format!("ReadError: {error}"))?;
     for entry in entries {
+        entries_seen += 1;
+        if entries_seen > 1_000_000 {
+            return Err("Archive has more than 1000000 members".to_string());
+        }
         let mut entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
@@ -543,22 +597,22 @@ pub fn extract_archive(
             continue;
         }
         let target = dest.join(&rel);
-        if !inside(&target, dest) {
+        if !inside(&target, &dest) {
             result
                 .warnings
                 .push(format!("Archive member escapes destination: {rel:?}"));
             continue;
         }
-        if let Err(reason) = check_member_root(&rel, &target, dest, expected_top) {
+        let entry_type = entry.header().entry_type();
+        if let Err(reason) = check_member_root(&rel, &target, &dest, expected_top, entry_type) {
             result.warnings.push(reason);
             continue;
         }
 
-        let entry_type = entry.header().entry_type();
         let mode = filtered_mode(entry_type, entry.header().mode().unwrap_or(0o644));
         let mtime = entry.header().mtime().unwrap_or(0) as i64;
         if entry_type.is_dir() {
-            if let Err(error) = create_dir(&target, mtime) {
+            if let Err(error) = create_dir(&target, mode, mtime) {
                 result
                     .warnings
                     .push(format!("Could not extract {rel:?}: {error}"));
@@ -568,20 +622,20 @@ pub fn extract_archive(
             continue;
         }
         if entry_type.is_symlink() || entry_type.is_hard_link() {
-            let resolved = match link_target(&entry, dest, &target, expected_top) {
+            let resolved = match link_target(&entry, &dest, &target, expected_top) {
                 Ok(path) => path,
                 Err(reason) => {
                     result.warnings.push(reason);
                     continue;
                 }
             };
-            let Some(link) = link_name(&entry) else {
-                result
-                    .warnings
-                    .push(format!("Archive link has no target: {rel:?}"));
-                continue;
-            };
             if entry_type.is_symlink() {
+                let Some(link) = link_name(&entry) else {
+                    result
+                        .warnings
+                        .push(format!("Archive link has no target: {rel:?}"));
+                    continue;
+                };
                 if let Some(parent) = target.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
@@ -594,22 +648,15 @@ pub fn extract_archive(
                     result.extracted += 1;
                 }
             } else {
-                if let Some(parent) = target.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                remove_existing(&target);
-                if let Err(error) = fs::hard_link(&resolved, &target) {
-                    result
-                        .warnings
-                        .push(format!("Could not extract {rel:?}: {error}"));
-                } else {
-                    result.extracted += 1;
-                }
+                pending_links.push((target, resolved, mtime));
             }
             continue;
         }
         if entry_type.is_file() {
-            if let Err(error) = create_regular(&mut entry, &target, mode, mtime) {
+            if let Err(error) = create_regular(&mut entry, &target, mode, mtime, &mut budget) {
+                if error == SIZE_LIMIT_ERROR {
+                    return Err(error);
+                }
                 result
                     .warnings
                     .push(format!("Could not extract {rel:?}: {error}"));
@@ -621,6 +668,20 @@ pub fn extract_archive(
         result
             .warnings
             .push(format!("Refusing device/fifo entry in archive: {rel:?}"));
+    }
+    for (target, resolved, _mtime) in pending_links {
+        if let Some(parent) = target.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        remove_existing(&target);
+        let rel = target.strip_prefix(&dest).unwrap_or(target.as_path());
+        if let Err(error) = fs::hard_link(&resolved, &target) {
+            result
+                .warnings
+                .push(format!("Could not extract {rel:?}: {error}"));
+        } else {
+            result.extracted += 1;
+        }
     }
     Ok(result)
 }
@@ -673,7 +734,7 @@ mod tests {
         .unwrap();
         assert_eq!(result.path, out);
         let dest = temp.path().join("dest");
-        let extracted = extract_archive(&out, &dest, Some("home"), &mut |_| {}).unwrap();
+        let extracted = extract_archive(&out, &dest, Some("home"), None, &mut |_| {}).unwrap();
         assert!(extracted.warnings.is_empty(), "{:?}", extracted.warnings);
         assert_eq!(fs::read(dest.join("home/a.txt")).unwrap(), b"alpha");
         assert_eq!(fs::read(dest.join("home/sub/b.txt")).unwrap(), b"beta");
@@ -681,7 +742,8 @@ mod tests {
         let link = fs::read_link(dest.join("home/link")).unwrap();
         assert_eq!(link, PathBuf::from("a.txt"));
         assert!(
-            seen.iter()
+            !seen
+                .iter()
                 .any(|(path, _)| path == Path::new("home/node_modules"))
         );
     }
@@ -720,7 +782,8 @@ mod tests {
             builder.finish().unwrap();
         }
         let dest = temp.path().join("dest");
-        let result = extract_archive(&archive_path, &dest, Some("home"), &mut |_| {}).unwrap();
+        let result =
+            extract_archive(&archive_path, &dest, Some("home"), None, &mut |_| {}).unwrap();
         assert!(!temp.path().join("evil.txt").exists());
         assert!(!dest.join("abs.txt").exists());
         assert!(!dest.join("home/link").exists());
@@ -745,7 +808,8 @@ mod tests {
             builder.finish().unwrap();
         }
         let dest = temp.path().join("dest");
-        let result = extract_archive(&archive_path, &dest, Some("home"), &mut |_| {}).unwrap();
+        let result =
+            extract_archive(&archive_path, &dest, Some("home"), None, &mut |_| {}).unwrap();
         assert!(!dest.join("other/file.txt").exists());
         assert!(!result.warnings.is_empty());
     }
@@ -771,7 +835,7 @@ mod tests {
             );
             let dest = temp.path().join("dest");
             let extracted =
-                extract_archive(&result.path, &dest, Some("home"), &mut |_| {}).unwrap();
+                extract_archive(&result.path, &dest, Some("home"), None, &mut |_| {}).unwrap();
             assert!(extracted.warnings.is_empty(), "{:?}", extracted.warnings);
             assert_eq!(fs::read(dest.join("home/sub/b.txt")).unwrap(), b"beta");
         }
@@ -813,8 +877,99 @@ mod tests {
             .unwrap();
         assert!(status.success());
         let dest = temp.path().join("python-dest");
-        let extracted = extract_archive(&py_out, &dest, Some("home"), &mut |_| {}).unwrap();
+        let extracted = extract_archive(&py_out, &dest, Some("home"), None, &mut |_| {}).unwrap();
         assert!(extracted.warnings.is_empty(), "{:?}", extracted.warnings);
         assert_eq!(fs::read(dest.join("home/café.txt")).unwrap(), b"x");
+    }
+
+    #[test]
+    fn rejects_regular_entry_over_expected_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(dest.join("home")).unwrap();
+        fs::write(dest.join("home/keep.txt"), b"keep").unwrap();
+        let archive = temp.path().join("root.tar");
+        let file = File::create(&archive).unwrap();
+        let mut builder = Builder::new(file);
+        builder
+            .append(
+                &raw_header("home", 1, EntryType::Regular, b""),
+                Cursor::new(b"x"),
+            )
+            .unwrap();
+        builder.finish().unwrap();
+        let result = extract_archive(&archive, &dest, Some("home"), None, &mut |_| {}).unwrap();
+        assert!(dest.join("home/keep.txt").exists());
+        assert!(!result.warnings.is_empty());
+    }
+
+    #[test]
+    fn restores_directory_mode() {
+        let temp = tempfile::tempdir().unwrap();
+        let dest = temp.path().join("dest");
+        let archive = temp.path().join("mode.tar");
+        let file = File::create(&archive).unwrap();
+        let mut builder = Builder::new(file);
+        let mut header = raw_header("home/private", 0, EntryType::dir(), b"");
+        header.set_mode(0o700);
+        header.set_cksum();
+        builder.append(&header, Cursor::new(b"")).unwrap();
+        builder.finish().unwrap();
+        extract_archive(&archive, &dest, Some("home"), None, &mut |_| {}).unwrap();
+        let mode = fs::metadata(dest.join("home/private"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+
+    #[test]
+    fn resolves_forward_hard_link() {
+        let temp = tempfile::tempdir().unwrap();
+        // Android's SELinux policy denies `link(2)` for app domains, so hard links
+        // are unavailable here; skip rather than fail on a capable system.
+        let probe = temp.path().join("probe");
+        fs::write(&probe, b"x").unwrap();
+        if fs::hard_link(&probe, temp.path().join("probe-link")).is_err() {
+            return;
+        }
+        let dest = temp.path().join("dest");
+        let archive = temp.path().join("links.tar");
+        let file = File::create(&archive).unwrap();
+        let mut builder = Builder::new(file);
+        builder
+            .append(
+                &raw_header("home/link", 0, EntryType::Link, b"home/target"),
+                Cursor::new(b""),
+            )
+            .unwrap();
+        builder
+            .append(
+                &raw_header("home/target", 4, EntryType::Regular, b""),
+                Cursor::new(b"data"),
+            )
+            .unwrap();
+        builder.finish().unwrap();
+        extract_archive(&archive, &dest, Some("home"), None, &mut |_| {}).unwrap();
+        assert_eq!(fs::read(dest.join("home/link")).unwrap(), b"data");
+    }
+
+    #[test]
+    fn refuses_archive_over_byte_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        let dest = temp.path().join("dest");
+        let archive = temp.path().join("big.tar");
+        let file = File::create(&archive).unwrap();
+        let mut builder = Builder::new(file);
+        builder
+            .append(
+                &raw_header("home/big", 100, EntryType::Regular, b""),
+                Cursor::new(vec![b'x'; 100]),
+            )
+            .unwrap();
+        builder.finish().unwrap();
+        let error =
+            extract_archive(&archive, &dest, Some("home"), Some(10), &mut |_| {}).unwrap_err();
+        assert!(error.contains("size limit"));
     }
 }
