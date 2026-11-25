@@ -108,9 +108,8 @@ body:
     attributes:
       label: Installation method
       options:
-        - tsctl install
-        - install.sh (manual)
-        - pip install termux-sync
+        - install.sh (build from source)
+        - older Python release
         - other
     validations:
       required: true

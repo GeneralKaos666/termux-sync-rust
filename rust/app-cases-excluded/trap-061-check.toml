@@ -1,4 +1,0 @@
-bin.name = "run-original"
-args = ["check", "日本語"]
-status.code = 0
-fs.sandbox = true

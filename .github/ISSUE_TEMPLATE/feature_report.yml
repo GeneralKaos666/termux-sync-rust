@@ -22,9 +22,9 @@ body:
         - Storage backend (local / gdrive / github)
         - Scheduler / daemon
         - CLI commands (check, clear-cache, status, logs, etc.)
-        - tsctl (install / updater / uninstall)
+        - Installer / build
         - Configuration (config.json)
-        - PyPI / packaging
+        - Packaging / release
         - Documentation
         - Other
     validations:

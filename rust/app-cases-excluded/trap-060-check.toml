@@ -1,4 +1,0 @@
-bin.name = "run-original"
-args = ["check", "👍🏽 thumbs"]
-status.code = 0
-fs.sandbox = true

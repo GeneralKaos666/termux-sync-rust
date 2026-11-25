@@ -9,6 +9,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- The README and FAQ document the Rust build only. They credit the original
+  Python project at `djunekz/termux-sync` and state that backups are compatible
+  in both directions.
+- Install, update, and uninstall instructions now use `bash install.sh` and the
+  two binaries instead of the removed `tsctl` script.
+
+### Fixed
+- `.github/workflows/labels.yml` now requests `contents: read`, so checkout can
+  clone the repository before syncing labels.
+
+### Removed
+- `tsctl` control script. Build and install with `bash install.sh`; update with
+  `git pull --ff-only && bash install.sh`; uninstall by deleting the two binaries.
+- `reference/` Python tree, `rust/app-cases-excluded/`, `rust/analyze.*`,
+  `rust/MAP.md`, `rust/HANDOFF.md`, `rust/PORT_MAP.md`, `rust/research/`, the
+  rust-anything metadata files, and unused fixture trees. Recovery:
+  `git log --all --oneline -- <path>` then `git checkout <sha>^ -- <path>`.
+- The pip entry in `.github/dependabot.yml`, because no Python dependencies
+  remain in the repository.
+
 ## [2.0.0] - 2026-11-24
 
 ### Changed

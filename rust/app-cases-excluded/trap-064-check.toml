@@ -1,4 +1,0 @@
-bin.name = "run-original"
-args = ["check", "İstanbul"]
-status.code = 0
-fs.sandbox = true

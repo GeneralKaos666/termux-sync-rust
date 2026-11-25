@@ -57,7 +57,7 @@ Releases follow Semantic Versioning. A new release is tagged when:
 
 The release process:
 
-1. Update `VERSION` in `termux-sync.py`
+1. Update the version in `rust/app/Cargo.toml` and `rust/termux-sync-core/Cargo.toml`
 2. Add an entry to `CHANGELOG.md` under the new version number
 3. Create and push a version tag in the form `vX.Y.Z`
 4. The release workflow creates a GitHub Release automatically with the archive and changelog entry

@@ -32,6 +32,6 @@ echo "Keep auto-backup disabled or set it again; the boot script must point at t
 pause
 
 step "5/5: Rollback"
-echo "If anything fails, restore the Python command:"
+echo "If anything fails, restore the previous command:"
 echo "  cp -p $BIN/termux-sync-python $BIN/termux-sync"
-echo "The Python source is still in $ROOT until you retire it."
+echo "The saved binary stays in place until you remove it."

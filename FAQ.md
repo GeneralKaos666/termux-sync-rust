@@ -6,39 +6,42 @@
 
 **How do I install termux-sync?**
 
-The recommended method is to use `tsctl`, the control tool:
+The recommended method is to build both binaries from a clone:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/GeneralKaos666/termux-sync-rust/main/tsctl -o tsctl
-chmod +x tsctl
-./tsctl install
+pkg install rust git
+git clone https://github.com/GeneralKaos666/termux-sync-rust ~/termux-sync
+cd ~/termux-sync
+bash install.sh
 ```
 
-This downloads the latest release from GitHub and registers the `termux-sync` command system-wide. After installation, you can discard the downloaded `tsctl` file — a copy is installed at `$PREFIX/bin/tsctl`.
+This builds the Rust sources and installs `termux-sync` and `termux-sync-tui` into `$PREFIX/bin`.
 
 **Can I install termux-sync without internet access?**
 
-Yes. Clone or download the repository manually, then run `bash install.sh` from the project directory. All dependencies (`python`, `python-pip`, `rich`) need to be available through the Termux package manager or already installed.
+Yes. Clone or download the repository manually, then run `bash install.sh` from the project directory. Rust (`pkg install rust`) must be available through the Termux package manager or already installed. The build itself needs no network access once the crates are cached.
 
-**What does `tsctl install` put on my device?**
+**What does the installer put on my device?**
 
-The release script is placed at `$PREFIX/lib/termux-sync/termux-sync.py`. A launcher script is written to `$PREFIX/bin/termux-sync` so the command is available everywhere. Nothing is written outside of the Termux prefix and your home directory.
+The compiled binaries are placed at `$PREFIX/bin/termux-sync` and `$PREFIX/bin/termux-sync-tui` so the commands are available everywhere. Nothing is written outside of the Termux prefix and your home directory.
 
 **How do I update termux-sync?**
 
 ```bash
-tsctl updater
+cd ~/termux-sync
+git pull --ff-only
+bash install.sh
 ```
 
-This fetches the latest release from GitHub, verifies its SHA-256 checksum, and refreshes the launcher.
+This rebuilds from the latest sources and replaces both binaries.
 
 **How do I uninstall termux-sync?**
 
 ```bash
-tsctl uninstall
+rm -f "$PREFIX/bin/termux-sync" "$PREFIX/bin/termux-sync-tui"
 ```
 
-This removes the launcher, install directory, config directory, and any shell aliases. Your backup archives are not deleted.
+This removes the binaries. Your configuration and backup archives are not deleted.
 
 **What runtime is required?**
 
@@ -89,7 +92,7 @@ Add paths to `exclude_patterns` in `~/.config/termux-sync/config.json`. You can 
 
 **How many backups are kept?**
 
-The `max_backups` setting in your config controls this. The default is 5. When a new backup is created and the count exceeds this limit, the oldest backup is deleted automatically. For Google Drive, this pruning was broken before v1.2.0 — update with `tsctl updater` if you are on an older version.
+The `max_backups` setting in your config controls this. The default is 5. When a new backup is created and the count exceeds this limit, the oldest backup is deleted automatically. For Google Drive, this pruning was broken before v1.2.0 — update to the current build if you are on an older version.
 
 **How does restore work?**
 
@@ -223,7 +226,7 @@ Generally yes, as long as no Termux processes are actively using files in that d
 
 **I get "command not found" when running `termux-sync`.**
 
-The launcher at `$PREFIX/bin/termux-sync` may be missing. Run `tsctl status` to check the installation state. If the launcher is missing, run `tsctl install` or re-run `bash install.sh`.
+The binary at `$PREFIX/bin/termux-sync` may be missing. Check with `command -v termux-sync`, then re-run `bash install.sh` from the clone.
 
 **GitHub returns a 401 error.**
 
@@ -243,7 +246,7 @@ Install rclone with `pkg install rclone` and configure a remote named `termux-sy
 
 **Old backups are not being deleted from Google Drive.**
 
-This was a bug in versions before v1.2.0 where `GDriveStorage.delete_old()` was a no-op. Update with `tsctl updater` to fix it.
+This was a bug in versions before v1.2.0 where `GDriveStorage.delete_old()` was a no-op. Update to the current build to fix it.
 
 **I restored but some files are missing.**
 

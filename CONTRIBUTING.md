@@ -85,8 +85,7 @@ cargo clippy --manifest-path tui/Cargo.toml --all-targets -- -D warnings
 ```
 
 App replay cases live in `rust/app-cases/`; CLI integration tests live in
-`rust/app/tests/cli_integration.rs`. The Python tree under `reference/` is not built or
-tested by CI.
+`rust/app/tests/cli_integration.rs`.
 
 ---
 
@@ -106,7 +105,7 @@ Pull requests that lack context, break existing commands, or introduce large unr
 ## Code Style
 
 - Follow standard `rustfmt` output and keep `clippy -D warnings` clean.
-- Shell scripts (`install.sh`, `tsctl`, `rust/*.sh`) use 4-space indentation and `set -euo pipefail`.
+- Shell scripts (`install.sh`, `rust/*.sh`) use 4-space indentation and `set -euo pipefail`.
 - Keep functions and modules focused. If a file is growing large, consider splitting it.
 - Add inline comments for non-obvious logic. Avoid comments that just restate what the code does.
 - Do not add a dependency without discussion in an issue first.
@@ -131,7 +130,7 @@ Examples of good commit messages:
 ```
 Fix SHA-256 verification skipping empty archives
 Add bz2 compression support to backup command
-Update tsctl to handle missing git gracefully
+Handle missing rclone in the status command
 ```
 
 ---

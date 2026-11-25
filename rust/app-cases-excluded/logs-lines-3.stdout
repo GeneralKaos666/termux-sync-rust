@@ -1,9 +1,0 @@
-
-LOGS
-[CWD]/rust/fixtures/app/home/.config/termux-sync/sync.log
-
-Tip: add --debug to also show saved tracebacks.
-
-[[..]] [INFO] fixture log line 097
-[[..]] [INFO] fixture log line 098
-[[..]] [INFO] fixture log line 099

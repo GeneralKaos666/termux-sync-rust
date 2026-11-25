@@ -1,8 +1,6 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/GeneralKaos666/termux-sync-rust/main/assets/logo.svg" alt="termux-sync logo" width="480">
 
-[![PyPI version](https://img.shields.io/pypi/v/termux-sync?logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/termux-sync/)
-[![PyPI downloads](https://img.shields.io/pepy/dt/termux-sync?logo=pypi&logoColor=white&label=downloads)](https://pepy.tech/project/termux-sync)
 [![Rust 1.100+](https://img.shields.io/badge/rust-1.100%2B-orange?badge.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?badge.svg)](LICENSE)
 [![Termux](https://img.shields.io/badge/Termux-compatible-brightgreen?badge.svg)](https://termux.dev)
@@ -15,12 +13,8 @@
 [![Repo size](https://img.shields.io/github/repo-size/GeneralKaos666/termux-sync-rust)](https://github.com/GeneralKaos666/termux-sync-rust)
 [![Platform](https://img.shields.io/badge/platform-Termux%20%7C%20Android-3DDC84?logo=android&logoColor=white)](https://termux.dev)
 [![Storage](https://img.shields.io/badge/storage-local%20%7C%20Google%20Drive%20%7C%20GitHub-blue)](#setup)
-[![Terminal UI](https://img.shields.io/badge/UI-rich%20terminal-8A2BE2)](https://github.com/Textualize/rich)
+[![Terminal UI](https://img.shields.io/badge/UI-Ratatui-8A2BE2)](https://ratatui.rs)
 [![Checksums](https://img.shields.io/badge/integrity-SHA--256-success)](#backup-structure)
-[![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
-[![Type checked: mypy](https://img.shields.io/badge/type%20checked-mypy-2a6db2)](https://mypy-lang.org/)
-[![Tested with pytest](https://img.shields.io/badge/tested%20with-pytest-0A9EDC?logo=pytest&logoColor=white)](https://pytest.org)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 [![Maintained](https://img.shields.io/badge/maintained-yes-brightgreen)](https://github.com/GeneralKaos666/termux-sync-rust/commits/main)
 </p>
@@ -29,6 +23,8 @@
 
 Backup and restore your entire Termux environment across devices.
 termux-sync captures your installed packages, home directory, and configuration files into a portable backup that can be fully restored on any device. Backups can be stored locally, uploaded to Google Drive via rclone, or pushed to a private GitHub repository.
+
+This is the pure Rust implementation of [termux-sync](https://github.com/djunekz/termux-sync), the original Python project by [djunekz](https://github.com/djunekz). The command line, configuration file, backup layout, and manifests are unchanged, so backups made by the original Python release restore here, and backups made here restore with it.
 
 ---
 
@@ -54,7 +50,7 @@ termux-sync captures your installed packages, home directory, and configuration 
 | Export config | Save configuration to a portable file (tokens redacted) |
 | Import config | Load configuration from a previously exported file |
 | Checksum verification | SHA-256 integrity check performed on every restore |
-| Rich terminal UI | Colored progress bars, tables, and status panels |
+| Terminal UI | Ratatui operations cockpit in `termux-sync-tui` |
 | Persistent logging | Full log written to `~/.config/termux-sync/sync.log` |
 
 ---
@@ -72,29 +68,46 @@ Optional dependencies depending on which storage backend you use:
 - `git` — required for GitHub storage (`pkg install git`)
 - `Termux:Boot` — required for auto-backup on device start (install from F-Droid)
 
+The installed binaries have no Python runtime dependency.
+
 ---
 
 ## Installation
 
-The current app is pure Rust. Build and install both binaries from a clone:
+Build and install both binaries from a clone:
 
 ```bash
 pkg install rust git
 git clone https://github.com/GeneralKaos666/termux-sync-rust ~/termux-sync
 cd ~/termux-sync
-bash rust/install.sh
+bash install.sh
 ```
 
-This installs `termux-sync` and `termux-sync-tui` into `$PREFIX/bin`.
+`install.sh` delegates to `rust/install.sh`, which builds `termux-sync` and
+`termux-sync-tui` in release mode and installs them into `$PREFIX/bin`.
 
-To replace an existing Python installation interactively:
+To keep an existing Python command available as a rollback, run:
 
 ```bash
 bash rust/cutover.sh
 ```
 
-The old Python command is kept as `termux-sync-python` for rollback. The
-Python sources stay in the repository as reference until you remove them.
+The old command is saved as `termux-sync-python` before the Rust binary replaces it.
+
+---
+
+## Compatibility with other termux-sync builds
+
+Backups are portable across implementations:
+
+- `manifest.json` keeps the same keys (`name`, `files` with `archive` and
+  `checksum`, `packages`, `source`) and the same SHA-256 checksums.
+- Archives keep the same names (`home.tar.gz`, `usr_etc.tar.gz`) and layout.
+- The configuration file stays at `~/.config/termux-sync/config.json` with the same keys.
+
+Any backup produced by the original Python termux-sync or another termux-sync
+build can be listed, verified, and restored by this one. Backups created here
+can also be restored by those builds. No migration step is required.
 
 ---
 
@@ -352,10 +365,10 @@ termux-sync backup --label "migration"
 **On the new device** — install termux-sync and restore:
 
 ```bash
-# Download and install tsctl
-curl -fsSL https://raw.githubusercontent.com/GeneralKaos666/termux-sync-rust/main/tsctl -o tsctl
-chmod +x tsctl
-bash tsctl install
+pkg install rust git
+git clone https://github.com/GeneralKaos666/termux-sync-rust ~/termux-sync
+cd ~/termux-sync
+bash install.sh
 
 # Configure with the same credentials as the old device
 termux-sync setup
@@ -364,7 +377,7 @@ termux-sync setup
 termux-sync restore
 ```
 
-The restore process verifies checksums, extracts the archives, and reinstalls all packages automatically.
+The restore process verifies checksums, extracts the archives, and reinstalls all packages automatically. Backups from the original Python termux-sync work here without any conversion.
 
 ---
 
@@ -376,12 +389,13 @@ The restore process verifies checksums, extracts the archives, and reinstalls al
 | GitHub 401 error | Check that your token has the `repo` scope and has not expired |
 | Archive too large | Add paths to `exclude_patterns` in `config.json`, or use `clear-cache` first |
 | Restore overwrites wrong path | Check the `source` field in the backup's `manifest.json` |
-| `termux-sync: command not found` | Run `tsctl install` or re-run `install.sh` |
+| `termux-sync: command not found` | Re-run `bash install.sh` from the clone |
+| `cargo: command not found` | Run `pkg install rust` |
 | Daemon does not start on boot | Verify Termux:Boot is installed from F-Droid and opened at least once |
 | GitHub upload fails on large backup | Add paths to `exclude_patterns` to reduce backup size |
 | Cache not cleared | Run `termux-sync clear-cache` and confirm both prompts |
 | Config lost after reinstall | Use `export-config` before uninstalling; `import-config` after reinstalling |
-| Old backups not pruned on GDrive | Fixed in v1.2.0 — update with `tsctl updater` |
+| Old backups not pruned on GDrive | Fixed in v1.2.0 — update to the current build |
 
 ---
 
@@ -391,14 +405,14 @@ The restore process verifies checksums, extracts the archives, and reinstalls al
 termux-sync-rust/
 ├── rust/
 │   ├── app/                termux-sync CLI
-│   └── termux-sync-core/   shared core library
+│   ├── termux-sync-core/   shared core library
+│   ├── app-cases/          recorded CLI behavior cases (trycmd)
+│   ├── fixtures/           fixture homes, prefixes and tool stubs
+│   ├── install.sh          native release build and install
+│   └── cutover.sh          interactive switch from an installed Python command
 ├── tui/                    Ratatui operations TUI
-├── reference/              original Python implementation, for reference
 ├── assets/                 README logo and command menu
 ├── install.sh              delegates to rust/install.sh
-├── tsctl                   install/update/status control tool
-├── rust/install.sh         native release build and install
-├── rust/cutover.sh         interactive Python-to-Rust cutover
 ├── CHANGELOG.md            Version history
 ├── FAQ.md                  Frequently asked questions
 └── README.md               This file
@@ -433,7 +447,7 @@ Or run the standalone alias:
 termux-sync-tui
 ```
 
-Install both with `bash rust/install.sh`.
+Install both with `bash install.sh`.
 Use `--ascii` or `TERMUX_SYNC_TUI_ASCII=1` for terminals whose font renders
 the default icons badly.
 
@@ -452,6 +466,13 @@ release binaries are a later distribution task.
 Contributions are welcome. Please read [CONTRIBUTING](CONTRIBUTING.md) before opening a pull request.
 
 For bug reports and feature requests, use the GitHub issue tracker and follow the provided templates.
+
+---
+
+## Credits
+
+- Original Python implementation: [djunekz/termux-sync](https://github.com/djunekz/termux-sync)
+- Rust rewrite: [GeneralKaos666/termux-sync-rust](https://github.com/GeneralKaos666/termux-sync-rust)
 
 ---
 

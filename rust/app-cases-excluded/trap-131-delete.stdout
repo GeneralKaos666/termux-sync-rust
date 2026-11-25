@@ -1,7 +1,0 @@
-DELETE BACKUP
-Storage: LOCAL
-Available Backups
-# Name Date Pkgs Size Label
-1 termux_backup_20250101_120000 [..] 3 126.0 B fixture backup
-Backup to be deleted: İstanbul
-✗ Failed to delete backup: Backup not found: [CWD]/rust/fixtures/app/home/termux-backups/İstanbul
