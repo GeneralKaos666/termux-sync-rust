@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::io::Cursor;
 use std::io::Write;
@@ -83,7 +84,22 @@ impl Fixture {
         self.run_env(args, stdin, &[])
     }
 
+    fn run_os(&self, args: &[OsString], stdin: Option<&str>) -> Output {
+        let args: Vec<OsString> = args.to_vec();
+        self.run_os_env(&args, stdin, &[])
+    }
+
     fn run_env(&self, args: &[&str], stdin: Option<&str>, extra_env: &[(&str, &str)]) -> Output {
+        let args: Vec<OsString> = args.iter().map(OsString::from).collect();
+        self.run_os_env(&args, stdin, extra_env)
+    }
+
+    fn run_os_env(
+        &self,
+        args: &[OsString],
+        stdin: Option<&str>,
+        extra_env: &[(&str, &str)],
+    ) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_termux-sync-rs"));
         command
             .args(args)
@@ -541,4 +557,21 @@ fn schedule_survives_broken_cron_file() {
     let out = fx.run(&["schedule"], Some("n\n"));
     assert_eq!(out.status.code(), Some(1));
     assert!(!String::from_utf8_lossy(&out.stderr).contains("panicked"));
+}
+
+#[test]
+fn non_utf8_target_is_rejected_without_panic() {
+    use std::os::unix::ffi::OsStringExt;
+    let fx = Fixture::new();
+    let bad = OsString::from_vec(vec![0xff, 0xfe]);
+    let out = fx.run_os(&[OsString::from("import-config"), bad], None);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("valid UTF-8"));
+}
+
+#[test]
+fn flag_before_tui_is_not_silent_success() {
+    let fx = Fixture::new();
+    let out = fx.run(&["--debug", "tui"], None);
+    assert_eq!(out.status.code(), Some(2));
 }

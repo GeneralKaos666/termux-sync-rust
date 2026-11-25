@@ -1,6 +1,6 @@
 //! Front-door CLI: parse argv, call the ported unit, report errors.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::process::ExitCode;
 
 use termux_sync_core::port;
@@ -44,7 +44,6 @@ const COMMANDS: &[&str] = &[
     "clear-logs",
     "check",
     "clear-cache",
-    "tui",
     "help",
 ];
 
@@ -110,9 +109,13 @@ fn report_error(error: &str) -> ExitCode {
 }
 
 pub fn run_from_argv() -> ExitCode {
-    let raw: Vec<String> = std::env::args().skip(1).collect();
-    if raw.first().map(String::as_str) == Some("tui") {
-        return match termux_sync_tui::main_entry("termux-sync tui", &raw[1..]) {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == OsStr::new("tui")) {
+        let rest: Vec<String> = args[1..]
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        return match termux_sync_tui::main_entry("termux-sync tui", &rest) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("termux-sync tui: {error}");
@@ -124,14 +127,13 @@ pub fn run_from_argv() -> ExitCode {
     let mut help = false;
     let mut version = false;
     let mut positional_only = false;
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let mut positionals: Vec<String> = Vec::new();
+    let mut positionals: Vec<OsString> = Vec::new();
     let mut index = 0usize;
     while index < args.len() {
         let arg = args[index].to_string_lossy().into_owned();
         index += 1;
         if positional_only {
-            positionals.push(arg);
+            positionals.push(args[index - 1].clone());
             continue;
         }
         match arg.as_str() {
@@ -192,7 +194,7 @@ pub fn run_from_argv() -> ExitCode {
             value if value.starts_with('-') && value != "-" => {
                 return usage(&format!("unrecognized arguments: {value}"));
             }
-            _ => positionals.push(arg),
+            _ => positionals.push(args[index - 1].clone()),
         }
     }
 
@@ -200,22 +202,29 @@ pub fn run_from_argv() -> ExitCode {
         println!("termux-sync v{}", termux_sync_core::core::paths::VERSION);
         return ExitCode::SUCCESS;
     }
-    if help || positionals.is_empty() || positionals[0] == "help" {
+    if help || positionals.is_empty() || positionals[0] == OsStr::new("help") {
         let _ = port::print_help();
         return ExitCode::SUCCESS;
     }
     if positionals.len() > 2 {
-        return usage(&format!(
-            "unrecognized arguments: {}",
-            positionals[2..].join(" ")
-        ));
+        let extra: Vec<String> = positionals[2..]
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        return usage(&format!("unrecognized arguments: {}", extra.join(" ")));
     }
-    let command = positionals[0].clone();
+    let command = match positionals[0].to_str() {
+        Some(command) => command.to_string(),
+        None => return usage("command must be valid UTF-8"),
+    };
     if !COMMANDS.contains(&command.as_str()) {
         return unknown(&command);
     }
     if positionals.len() > 1 {
-        opts.target = positionals[1].clone();
+        match positionals[1].to_str() {
+            Some(target) => opts.target = target.to_string(),
+            None => return usage("target must be valid UTF-8"),
+        }
     }
 
     if let Ok(cfg) = port::load_config() {
@@ -256,7 +265,6 @@ pub fn run_from_argv() -> ExitCode {
         "clear-logs" => port::cmd_clear_logs(opts.yes),
         "check" => port::cmd_check(opts.target.clone()),
         "clear-cache" => port::cmd_clear_cache(opts.yes),
-        "tui" => Ok(serde_json::Value::Null),
         "help" => port::print_help(),
         _ => Ok(serde_json::Value::Null),
     };

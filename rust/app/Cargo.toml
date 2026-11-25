@@ -11,7 +11,6 @@ name = "termux-sync-rs"
 path = "src/main.rs"
 
 [dependencies]
-clap = "4"
 serde_json = "1"
 termux-sync-core = { path = "../termux-sync-core" }
 termux-sync-tui = { path = "../../tui" }
