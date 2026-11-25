@@ -127,7 +127,14 @@ pub fn save_schedule(sched: &Value) -> Result<(), String> {
 pub fn setup() -> Result<Value, String> {
     render::print_banner();
     render::print_section("SETUP", "Configure termux-sync storage and preferences");
-    let cfg = config::load_config()?;
+    let cfg = match config::load_config() {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            render::print_line(&format!("  Warning: {error}"));
+            render::print_line("  Starting from the default configuration.");
+            Value::Object(config::default_config())
+        }
+    };
     let mut map = cfg.as_object().cloned().unwrap_or_default();
 
     render::print_line("  Choose your storage backend:");
@@ -189,6 +196,17 @@ pub fn setup() -> Result<Value, String> {
                 render::print_line("  A token is already saved. Press Enter to keep it.");
             }
             loop {
+                if !existing_token.is_empty() {
+                    let value = render::ask("GitHub token", "")?;
+                    if value.trim().is_empty() {
+                        break;
+                    }
+                    map.insert(
+                        "github_token".to_string(),
+                        Value::String(value.trim().to_string()),
+                    );
+                    break;
+                }
                 let value = render::ask("GitHub token", "")?;
                 if value.trim().is_empty() {
                     render::print_line("  ✗ Token cannot be empty.");
@@ -275,7 +293,8 @@ pub fn setup() -> Result<Value, String> {
         }
     }
 
-    config::save_config(&cfg)?;
+    let saved = Value::Object(map.clone());
+    config::save_config(&saved)?;
     render::print_line(&format!(
         "  ✓ Configuration saved to {}",
         fmt::short_path(&paths::config_file().to_string_lossy())

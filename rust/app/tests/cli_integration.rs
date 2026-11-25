@@ -228,13 +228,14 @@ fn export_redacts_and_import_merges() {
 #[test]
 fn setup_and_schedule_write_state() {
     let fx = Fixture::new();
-    let setup = fx.run(&["setup"], Some("1\n\n\n\nn\n"));
+    let setup = fx.run(&["setup"], Some("1\n\nbz2\n7\nn\n"));
     assert!(
         setup.status.success(),
-        "setup failed: {}",
+        "{}",
         String::from_utf8_lossy(&setup.stdout)
     );
-    assert_eq!(fx.config()["storage"], "local");
+    assert_eq!(fx.config()["compression"], "bz2");
+    assert_eq!(fx.config()["max_backups"], 7);
 
     let schedule = fx.run(&["schedule"], Some("n\n"));
     assert!(schedule.status.success());
@@ -245,6 +246,19 @@ fn setup_and_schedule_write_state() {
     let boot = fx.home.join(".termux/boot/termux-sync-daemon.sh");
     assert!(boot.is_file());
     assert!(fs::metadata(&boot).unwrap().permissions().mode() & 0o111 != 0);
+}
+
+#[test]
+fn setup_keeps_stored_token_on_empty_answer() {
+    let fx = Fixture::new();
+    let out = fx.run(&["setup"], Some("3\n\nowner/repo\n\n\n\nn\n"));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert_eq!(fx.config()["github_token"], "secret-token");
+    assert_eq!(fx.config()["github_repo"], "owner/repo");
 }
 
 #[test]
