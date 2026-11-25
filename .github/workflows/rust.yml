@@ -3,15 +3,19 @@ name: Rust
 on:
   push:
     paths:
-      - "rust/**"
+      - "app/**"
+      - "core/**"
       - "tui/**"
+      - "Cargo.toml"
       - "Cargo.lock"
       - "install.sh"
       - ".github/workflows/rust.yml"
   pull_request:
     paths:
-      - "rust/**"
+      - "app/**"
+      - "core/**"
       - "tui/**"
+      - "Cargo.toml"
       - "Cargo.lock"
       - "install.sh"
       - ".github/workflows/rust.yml"
@@ -25,15 +29,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Format core
-        run: cargo fmt --manifest-path rust/termux-sync-core/Cargo.toml --check
-      - name: Test core
-        run: cargo test --locked --manifest-path rust/termux-sync-core/Cargo.toml
-      - name: Clippy core
-        run: cargo clippy --locked --manifest-path rust/termux-sync-core/Cargo.toml --all-targets -- -D warnings
-      - name: Format app
-        run: cargo fmt --manifest-path rust/app/Cargo.toml --check
-      - name: Test app
-        run: cargo test --locked --manifest-path rust/app/Cargo.toml
-      - name: Clippy app
-        run: cargo clippy --locked --manifest-path rust/app/Cargo.toml --all-targets -- -D warnings
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Test
+        run: cargo test --locked --workspace
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings

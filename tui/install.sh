@@ -36,18 +36,18 @@ if [[ -z "$PREFIX_DIR" ]]; then
     exit 2
 fi
 
-BIN="$SCRIPT_DIR/target/release/termux-sync-tui"
+BIN="$SCRIPT_DIR/../target/release/termux-sync-tui"
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
     if ! command -v cargo >/dev/null 2>&1; then
         printf 'cargo is required. Install Rust first: pkg install rust\n' >&2
         exit 1
     fi
-    (cd "$SCRIPT_DIR" && cargo build --locked --release)
+    (cd "$SCRIPT_DIR/.." && cargo build --locked --release -p termux-sync-tui)
 fi
 
 if [[ ! -x "$BIN" ]]; then
     printf 'missing binary: %s\n' "$BIN" >&2
-    printf 'Run without --skip-build, or build it with: cd tui && cargo build --release\n' >&2
+    printf 'Run without --skip-build, or build it with: cargo build --release -p termux-sync-tui\n' >&2
     exit 1
 fi
 

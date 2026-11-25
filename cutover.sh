@@ -19,7 +19,7 @@ fi
 pause
 
 step "2/5: Build and install the Rust binaries"
-bash "$ROOT/rust/install.sh"
+bash "$ROOT/install.sh"
 pause
 
 step "3/5: Check the new version"

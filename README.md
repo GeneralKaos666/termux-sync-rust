@@ -83,13 +83,13 @@ cd ~/termux-sync
 bash install.sh
 ```
 
-`install.sh` delegates to `rust/install.sh`, which builds `termux-sync` and
-`termux-sync-tui` in release mode and installs them into `$PREFIX/bin`.
+`install.sh` builds `termux-sync` and `termux-sync-tui` in release mode and
+installs them into `$PREFIX/bin`.
 
 To keep an existing Python command available as a rollback, run:
 
 ```bash
-bash rust/cutover.sh
+bash cutover.sh
 ```
 
 The old command is saved as `termux-sync-python` before the Rust binary replaces it.
@@ -403,16 +403,16 @@ The restore process verifies checksums, extracts the archives, and reinstalls al
 
 ```
 termux-sync-rust/
-├── rust/
-│   ├── app/                termux-sync CLI
-│   ├── termux-sync-core/   shared core library
-│   ├── app-cases/          recorded CLI behavior cases (trycmd)
-│   ├── fixtures/           fixture homes, prefixes and tool stubs
-│   ├── install.sh          native release build and install
-│   └── cutover.sh          interactive switch from an installed Python command
+├── app/                    termux-sync CLI
+├── core/                   shared core library
 ├── tui/                    Ratatui operations TUI
+├── app-cases/              recorded CLI behavior cases (trycmd)
+├── fixtures/               fixture homes, prefixes and tool stubs
+├── install.sh              native release build and install
+├── cutover.sh              interactive switch from an installed Python command
+├── Cargo.toml              workspace manifest
 ├── assets/                 README logo and command menu
-├── install.sh              delegates to rust/install.sh
+├── docs/                   design records and plans
 ├── CHANGELOG.md            Version history
 ├── FAQ.md                  Frequently asked questions
 └── README.md               This file
@@ -423,7 +423,7 @@ termux-sync-rust/
 ## Optional Rust TUI
 
 The `tui/` directory contains an optional Ratatui dashboard and operations
-cockpit. It shares the Rust core and is installed by `rust/install.sh`.
+cockpit. It shares the Rust core and is installed by `install.sh`.
 
 It streams backup and restore through `termux-sync --json-events`, shows live
 stages and logs, verifies backups, lists remote backups, and gates restore

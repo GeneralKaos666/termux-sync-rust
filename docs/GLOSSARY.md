@@ -33,6 +33,6 @@ these names.
 | redaction | Mask token and password in exported config/events | `Redaction` |
 | narrow terminal | Width below the threshold, compact output | `is_narrow()` |
 | TUI | Ratatui operations cockpit | `termux-sync-tui` |
-| front door | Rust binary owning the entry point during the port | `rust/app` |
+| front door | Rust binary owning the entry point during the port | `app` |
 | fallback | A command the Rust front door does not implement; it exits with an unknown-command error | `frontdoor` |
 | lift | Removal of fallback, kill switches and bridges | `app lift` |

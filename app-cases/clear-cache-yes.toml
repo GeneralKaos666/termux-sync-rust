@@ -1,0 +1,9 @@
+bin.name = "run-original"
+args = ["clear-cache", "--yes"]
+env.add.COLUMNS = "200"
+env.add.HOME = "fixtures/app-ro/home"
+env.add.NO_COLOR = "1"
+env.add.PATH = "fixtures/app-ro/bin"
+env.add.PREFIX = "fixtures/app-ro/prefix"
+env.add.TMPDIR = "fixtures/app-ro/tmp"
+status.code = 0

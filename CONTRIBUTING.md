@@ -56,14 +56,14 @@ git clone https://github.com/GeneralKaos666/termux-sync-rust ~/termux-sync-rust
 cd ~/termux-sync-rust
 
 # Build both binaries
-bash rust/install.sh
+bash install.sh
 ```
 
 Run from the checkout:
 
 ```bash
-cargo run --manifest-path rust/app/Cargo.toml -- --help
-cargo run --manifest-path rust/app/Cargo.toml -- tui
+cargo run -p termux-sync-rs -- --help
+cargo run -p termux-sync-rs -- tui
 ```
 
 ---
@@ -71,21 +71,18 @@ cargo run --manifest-path rust/app/Cargo.toml -- tui
 ## Running Tests
 
 ```bash
-cargo test --manifest-path rust/termux-sync-core/Cargo.toml
-cargo test --manifest-path rust/app/Cargo.toml
-cargo test --manifest-path tui/Cargo.toml
+cargo test --locked --workspace
 ```
 
 Check formatting and lints before opening a pull request:
 
 ```bash
-cargo fmt --manifest-path rust/app/Cargo.toml --check
-cargo clippy --manifest-path rust/app/Cargo.toml --all-targets -- -D warnings
-cargo clippy --manifest-path tui/Cargo.toml --all-targets -- -D warnings
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
 ```
 
-App replay cases live in `rust/app-cases/`; CLI integration tests live in
-`rust/app/tests/cli_integration.rs`.
+App replay cases live in `app-cases/`; CLI integration tests live in
+`app/tests/cli_integration.rs`.
 
 ---
 
@@ -105,7 +102,7 @@ Pull requests that lack context, break existing commands, or introduce large unr
 ## Code Style
 
 - Follow standard `rustfmt` output and keep `clippy -D warnings` clean.
-- Shell scripts (`install.sh`, `rust/*.sh`) use 4-space indentation and `set -euo pipefail`.
+- Shell scripts (`install.sh`, `cutover.sh`, `smoke-github.sh`, `tui/install.sh`) use 4-space indentation and `set -euo pipefail`.
 - Keep functions and modules focused. If a file is growing large, consider splitting it.
 - Add inline comments for non-obvious logic. Avoid comments that just restate what the code does.
 - Do not add a dependency without discussion in an issue first.

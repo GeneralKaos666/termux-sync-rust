@@ -26,3 +26,5 @@ htmlcov/
 
 *.tar.gz
 *.part[0-9]*
+
+/target/

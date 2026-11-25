@@ -62,7 +62,7 @@ the `termux-sync` event protocol; setup and schedule hand the terminal to
 From the repository root:
 
 ```bash
-bash rust/install.sh
+bash install.sh
 termux-sync tui
 ```
 
@@ -70,10 +70,10 @@ The standalone `termux-sync-tui` binary is kept as an alias for the same
 library. In a development checkout:
 
 ```bash
-cargo run --manifest-path rust/app/Cargo.toml -- tui
+cargo run -p termux-sync-rs -- tui
 ```
 
-`install.sh` accepts `--prefix PATH` and `--skip-build`. It copies the release
+`tui/install.sh` accepts `--prefix PATH` and `--skip-build`. It copies the release
 binary into `$PREFIX/bin`.
 
 Requires a terminal on stdout. Non-TTY runs exit with status 2 instead of

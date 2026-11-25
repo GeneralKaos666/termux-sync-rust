@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 cargo build --locked >/dev/null
 
-BIN="$PWD/target/debug/termux-sync-tui"
+BIN="$PWD/../target/debug/termux-sync-tui"
 FAKE="$PWD/tests/pty_fake.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

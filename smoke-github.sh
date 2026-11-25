@@ -4,7 +4,7 @@ set -euo pipefail
 
 : "${GITHUB_TOKEN:?set GITHUB_TOKEN}"
 : "${GITHUB_REPO:?set GITHUB_REPO=owner/repo}"
-BIN="${TERMUX_SYNC_BIN:-$(cd "$(dirname "$0")/.." && pwd)/rust/app/target/release/termux-sync-rs}"
+BIN="${TERMUX_SYNC_BIN:-$(cd "$(dirname "$0")" && pwd)/target/release/termux-sync-rs}"
 [[ -x "$BIN" ]] || { echo "missing binary: $BIN" >&2; exit 1; }
 
 TMP="$(mktemp -d)"

@@ -79,7 +79,7 @@ Status: accepted (2026-11-24)
 Context: The port must stay runnable and reduce fallback gradually, but the installed
 `termux-sync` is in daily use.
 
-Decision: `rust/app` owns the entry point as `termux-sync-rs`. Unported commands run the
+Decision: `app` owns the entry point as `termux-sync-rs`. Unported commands run the
 original with the same argv, stdin, environment and pass through stdout, stderr and exit
 code. Rename to `termux-sync` only at lift.
 
@@ -103,7 +103,7 @@ Status: accepted (2026-11-24)
 
 Context: The Python suite is 2,947 lines and mocks `urllib` and `subprocess` heavily.
 
-Decision: Record whole-app CLI behavior into `rust/app-cases/` and replay it. Add Rust
+Decision: Record whole-app CLI behavior into `app-cases/` and replay it. Add Rust
 unit tests for internal rules (archive safety, manifest shapes, redaction, formatting,
 package names, storage parsing). Do not translate every Python test literally.
 
@@ -161,7 +161,7 @@ commands only after the unit gate passes.
 
 Consequences: Fallback rate stays 100% until the unit is complete, then drops per command.
 Checkpoints happen after each wave even though rust-anything sees one unit. The glue in
-`rust/app` calls the core module for wired commands.
+`app` calls the core module for wired commands.
 
 ## ADR-013: Checkpoints after each wave and before lift
 
@@ -184,8 +184,8 @@ recorded table width and the path text depend on the random `rust-anything-app-r
 suffix, and a backup name changes every second, so archives and manifests differ between
 two runs. These are recording noise, not behavior.
 
-Decision: Keep stable cases in `rust/app-cases` (125 cases, replayed at 100%). Move the
-unstable ones to `rust/app-cases-excluded/` for reference. Cover backup archives,
+Decision: Keep stable cases in `app-cases` (125 cases, replayed at 100%). Move the
+unstable ones to `app-cases-excluded/` for reference. Cover backup archives,
 restore extraction, `status`, `logs`, `clear-logs`, default `check`, and path-rendering
 output with Rust unit and integration tests that normalize timestamps and paths.
 
@@ -317,10 +317,10 @@ cases fail exact replay even after spacing/box normalization. The core's 28 unit
 and the Rust smoke tests already cover the logic. Keeping unreadable snapshots would block
 the lift without proving more.
 
-Decision: `rust/app-cases` keeps 10 deterministic cases (version, help, no args, unknown
+Decision: `app-cases` keeps 10 deterministic cases (version, help, no args, unknown
 command, invalid usage, list, and other non-interactive paths). Interactive, error-panel,
 backup, restore, setup, schedule, export/import and path-dependent cases stay in
-`rust/app-cases-excluded/` for reference. The unit gate plus smoke tests prove those
+`app-cases-excluded/` for reference. The unit gate plus smoke tests prove those
 behaviors.
 
 Consequences: `app replay` proves wiring and exit codes, not full human text. A behavior
@@ -349,12 +349,12 @@ Status: accepted (2026-11-24)
 
 Context: ADR-007 and ADR-010 set the version bump and native packaging for the lift.
 
-Decision: Report `2.0.0` from all Rust crates. `rust/install.sh` builds release binaries
-and installs `termux-sync` and `termux-sync-tui`. `rust/cutover.sh` backs up the Python
+Decision: Report `2.0.0` from all Rust crates. `install.sh` builds release binaries
+and installs `termux-sync` and `termux-sync-tui`. `cutover.sh` backs up the Python
 command, installs the Rust binaries and documents rollback.
 
-Consequences: `--version` and help show 2.0.0. The root `install.sh` and `tsctl` still
-describe the Python distribution until the user retires them; cutover uses `rust/`.
+Consequences: `--version` and help show 2.0.0. The root `install.sh` builds and
+installs both binaries; `cutover.sh` uses the root scripts.
 
 ## ADR-026: Post-lift hardening checks
 
@@ -364,10 +364,10 @@ Context: The first lift left three practical gaps: CLI commands were covered onl
 and smoke tests, GitHub storage had no live call, and the root installer still described
 Python.
 
-Decision: Add `rust/app/tests/cli_integration.rs` for backup/list/restore/delete, status,
+Decision: Add `app/tests/cli_integration.rs` for backup/list/restore/delete, status,
 logs, check, cache clearing, export/import, setup/schedule, version and parse errors.
-Add `rust/smoke-github.sh` for a token-backed live backup/list/restore/delete smoke. Make
-root `install.sh` delegate to `rust/install.sh` and rewrite `tsctl` for the Rust binaries.
+Add `smoke-github.sh` for a token-backed live backup/list/restore/delete smoke. Make
+root `install.sh` build both binaries directly and rewrite `tsctl` for the Rust binaries.
 
 Consequences: The excluded app cases are backed by binary-level integration tests. GitHub
 has a repeatable live smoke; it was run on a temporary private repository and the
