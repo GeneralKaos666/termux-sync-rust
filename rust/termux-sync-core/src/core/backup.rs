@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -9,6 +10,7 @@ use chrono::Local;
 use serde_json::{Map, Value, json};
 
 use crate::core::archive::{self, ArchiveOptions};
+use crate::core::config;
 use crate::core::events::{self, EventProgress};
 use crate::core::fmt;
 use crate::core::logging;
@@ -37,6 +39,15 @@ fn excludes(cfg: &Value) -> Vec<String> {
 
 fn cleanup(path: &Path) {
     let _ = fs::remove_dir_all(path);
+}
+
+fn prepare_work_dir(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("OSError: {error}"))?;
+    }
+    fs::create_dir(path).map_err(|error| format!("OSError: {error}"))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .map_err(|error| format!("OSError: {error}"))
 }
 
 pub fn get_storage(cfg: &Value) -> Result<Value, String> {
@@ -239,7 +250,7 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
     );
 
     let tmp_dir = paths::tmp_root().join(&backup_name);
-    fs::create_dir_all(&tmp_dir).map_err(|error| format!("OSError: {error}"))?;
+    prepare_work_dir(&tmp_dir)?;
 
     let mut compression = cfg_string(cfg, "compression", "gz");
     if !matches!(compression.as_str(), "gz" | "bz2" | "xz") {
@@ -329,7 +340,13 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
             ("total", Value::from(TOTAL_STAGES)),
         ],
     );
-    let installed = packages::installed_packages();
+    let installed = match packages::installed_packages() {
+        Ok(list) => list,
+        Err(error) => {
+            cleanup(&tmp_dir);
+            return Err(error);
+        }
+    };
     meta.insert(
         "packages".to_string(),
         Value::Array(installed.iter().cloned().map(Value::String).collect()),
@@ -415,9 +432,15 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
             seen += size;
             throttle.emit(seen, None, "bytes", Some(&path.to_string_lossy()), false);
         };
-        let archive_result: Result<(String, u64, String), String> = if let Storage::GitHub(github) =
-            &storage
-        {
+        #[cfg(debug_assertions)]
+        let injected_failure =
+            std::env::var("TERMUX_SYNC_TEST_ARCHIVE_FAIL").is_ok_and(|want| want == key);
+        #[cfg(not(debug_assertions))]
+        let injected_failure = false;
+
+        let archive_result: Result<(String, u64, String), String> = if injected_failure {
+            Err("injected archive failure".to_string())
+        } else if let Storage::GitHub(github) = &storage {
             match github.stream_sink(&out_name) {
                 Ok(sink) => {
                     match archive::create_archive_to_writer(&source, sink, &options, &mut on_member)
@@ -486,11 +509,6 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
                 );
             }
             Err(error) => {
-                if let Storage::GitHub(github) = &storage {
-                    github.abort_stream(&backup_name);
-                    cleanup(&tmp_dir);
-                    return Err(error);
-                }
                 events::emit(
                     "stage",
                     vec![
@@ -509,6 +527,8 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
                     "ERROR",
                     &format!("Archive failed for {}: {error}", source.display()),
                 );
+                cleanup(&tmp_dir);
+                return Err(error);
             }
         }
     }
@@ -576,7 +596,6 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
         }
     };
     let location = uploaded.location;
-    storage.delete_old(cfg.get("max_backups").and_then(fmt::py_int).unwrap_or(5))?;
 
     events::emit(
         "stage",
@@ -647,6 +666,10 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
         ],
     );
 
+    if verified != Some(false) {
+        storage.delete_old(config::retention_limit(cfg))?;
+    }
+
     cleanup(&tmp_dir);
 
     let total_size: i64 = files
@@ -708,7 +731,10 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
 }
 
 fn package_diff(backup_packages: &[String]) -> (bool, Vec<String>, Vec<String>, Vec<String>) {
-    let current: BTreeSet<String> = packages::installed_packages().into_iter().collect();
+    let current: BTreeSet<String> = packages::installed_packages()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     if current.is_empty() {
         return (false, Vec::new(), Vec::new(), Vec::new());
     }

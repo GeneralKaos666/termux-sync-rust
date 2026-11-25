@@ -77,6 +77,10 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str], stdin: Option<&str>) -> Output {
+        self.run_env(args, stdin, &[])
+    }
+
+    fn run_env(&self, args: &[&str], stdin: Option<&str>, extra_env: &[(&str, &str)]) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_termux-sync-rs"));
         command
             .args(args)
@@ -97,6 +101,9 @@ impl Fixture {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        for (key, value) in extra_env {
+            command.env(key, value);
+        }
         let mut child = command.spawn().unwrap();
         if let Some(input) = stdin {
             child
@@ -298,4 +305,16 @@ fn parse_errors_and_version() {
     let text = String::from_utf8_lossy(&missing_delete.stdout);
     assert!(text.contains("Failed to delete backup"));
     assert!(!text.contains("FileNotFoundError"));
+}
+
+#[test]
+fn backup_fails_when_an_archive_fails() {
+    let fx = Fixture::new();
+    let out = fx.run_env(
+        &["backup"],
+        None,
+        &[("TERMUX_SYNC_TEST_ARCHIVE_FAIL", "home")],
+    );
+    assert!(!out.status.success(), "backup reported success");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Failed to archive"));
 }

@@ -6,6 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use serde_json::{Map, Value};
 
+use crate::core::fmt;
 use crate::core::json;
 use crate::core::paths;
 
@@ -89,6 +90,13 @@ pub fn load_config() -> Result<Value, String> {
     Ok(data)
 }
 
+pub fn retention_limit(cfg: &Value) -> i64 {
+    cfg.get("max_backups")
+        .and_then(fmt::py_int)
+        .unwrap_or(5)
+        .max(1)
+}
+
 pub fn save_config(value: &Value) -> Result<(), String> {
     let dir = paths::config_dir();
     fs::create_dir_all(&dir).map_err(|error| format!("OSError: {error}"))?;
@@ -112,6 +120,7 @@ pub fn save_config(value: &Value) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn defaults_keep_python_order() {
@@ -122,5 +131,12 @@ mod tests {
             keys.last().map(|key| key.as_str()),
             Some("encrypt_password")
         );
+    }
+
+    #[test]
+    fn retention_is_at_least_one() {
+        assert_eq!(retention_limit(&json!({"max_backups": 0})), 1);
+        assert_eq!(retention_limit(&json!({"max_backups": -3})), 1);
+        assert_eq!(retention_limit(&json!({})), 5);
     }
 }

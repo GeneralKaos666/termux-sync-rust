@@ -182,7 +182,7 @@ pub fn sha256(path: Value, chunk: Option<Value>) -> Result<String, String> {
 
 /// Port of `get_installed_packages` (`src/termux_sync/__init__.py:666`).
 pub fn get_installed_packages() -> Result<Vec<String>, String> {
-    Ok(packages::installed_packages())
+    packages::installed_packages()
 }
 
 /// Port of `install_packages` (`src/termux_sync/__init__.py:685`).

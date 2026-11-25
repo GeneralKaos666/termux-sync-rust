@@ -1,16 +1,22 @@
 //! Package collection and reinstall.
 
+use std::path::Path;
 use std::process::Command;
 
 use crate::core::events;
 use crate::core::logging;
 
-pub fn installed_packages() -> Vec<String> {
-    let Ok(output) = Command::new("dpkg").arg("--get-selections").output() else {
-        return Vec::new();
-    };
+pub fn installed_packages() -> Result<Vec<String>, String> {
+    installed_packages_with(Path::new("dpkg"))
+}
+
+fn installed_packages_with(program: &Path) -> Result<Vec<String>, String> {
+    let output = Command::new(program)
+        .arg("--get-selections")
+        .output()
+        .map_err(|error| format!("OSError: could not run dpkg: {error}"))?;
     if !output.status.success() {
-        return Vec::new();
+        return Err(format!("RuntimeError: dpkg exited with {}", output.status));
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let mut packages = Vec::new();
@@ -20,7 +26,7 @@ pub fn installed_packages() -> Vec<String> {
             packages.push(parts[0].to_string());
         }
     }
-    packages
+    Ok(packages)
 }
 
 fn valid_name(package: &str) -> bool {
@@ -69,4 +75,20 @@ pub fn install(packages: &[String]) -> Vec<String> {
         }
     }
     failed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn failed_dpkg_is_an_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("dpkg");
+        fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(installed_packages_with(&script).is_err());
+    }
 }
