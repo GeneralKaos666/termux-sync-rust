@@ -6,12 +6,14 @@ on:
       - "rust/**"
       - "tui/**"
       - "Cargo.lock"
+      - "install.sh"
       - ".github/workflows/rust.yml"
   pull_request:
     paths:
       - "rust/**"
       - "tui/**"
       - "Cargo.lock"
+      - "install.sh"
       - ".github/workflows/rust.yml"
 
 jobs:
