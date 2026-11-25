@@ -4,6 +4,6 @@ status.code = 0
 env.add.HOME = "rust/fixtures/app-ro/home"
 env.add.PREFIX = "rust/fixtures/app-ro/prefix"
 env.add.TMPDIR = "rust/fixtures/app-ro/tmp"
-env.add.PATH = "rust/fixtures/app-ro/bin:/data/data/com.termux/files/usr/bin"
+env.add.PATH = "rust/fixtures/app-ro/bin"
 env.add.COLUMNS = "200"
 env.add.NO_COLOR = "1"

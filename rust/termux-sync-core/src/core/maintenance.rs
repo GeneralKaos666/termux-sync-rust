@@ -60,6 +60,11 @@ pub fn delete(cfg: &Value, backup_name: &str, assume_yes: bool) -> Result<Value,
     let backups = storage.list_backups();
     if backups.is_empty() {
         render::print_line("  No backups found.");
+        if !backup_name.is_empty() {
+            return Err(format!(
+                "FileNotFoundError: Backup not found: {backup_name}"
+            ));
+        }
         return Ok(Value::Null);
     }
     render::print_backup_list(&backups, "Available Backups");

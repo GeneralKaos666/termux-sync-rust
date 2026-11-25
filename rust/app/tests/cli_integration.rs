@@ -598,3 +598,34 @@ fn update_hint_uses_install_script() {
     assert!(text.contains("bash install.sh"));
     assert!(!text.contains("tsctl"));
 }
+
+#[test]
+fn error_paths_exit_non_zero() {
+    let fx = Fixture::new();
+    assert_eq!(
+        fx.run(&["import-config", "/nope/missing.json"], None)
+            .status
+            .code(),
+        Some(1),
+        "import-config missing file"
+    );
+    assert_eq!(
+        fx.run(&["restore", "--name", "nope"], None).status.code(),
+        Some(1),
+        "restore missing backup"
+    );
+    assert!(fx.run(&["logs", "--lines=3"], None).status.success());
+    assert_eq!(
+        fx.run(&["delete", "-n", "missing", "--yes"], None)
+            .status
+            .code(),
+        Some(1),
+        "delete missing backup"
+    );
+    let backup = fx.run(&["backup", "-l", "from-flag"], None);
+    assert!(
+        backup.status.success(),
+        "backup -l failed: {}",
+        String::from_utf8_lossy(&backup.stdout)
+    );
+}

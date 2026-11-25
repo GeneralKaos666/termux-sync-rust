@@ -23,8 +23,15 @@ plain() {
 run_case() {
     local name="$1" mode="$2" feed="$3"
     local out="$TMP/$name.out"
+    set +e
     ( eval "$feed" ) | HOME="$TMP/home" TEST_MODE="$mode" TERMUX_SYNC_BIN="$FAKE" \
-        timeout 15 script -qec "stty rows 24 cols 90; $BIN" /dev/null >"$out" 2>&1 || true
+        timeout 15 script -qec "stty rows 24 cols 90; $BIN" /dev/null >"$out" 2>&1
+    status=$?
+    set -e
+    if [[ $status -ne 0 ]]; then
+        printf '%s: exit %s\n' "$name" "$status"
+        return 1
+    fi
     printf '%s: ' "$name"
     if [[ ! -s "$out" ]]; then
         printf 'empty output\n'
