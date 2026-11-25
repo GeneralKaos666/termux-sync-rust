@@ -41,7 +41,6 @@ Run `termux-sync logs --lines 50` and paste the relevant lines here.
 ## Environment
 
 - termux-sync version (`termux-sync --version`):
-- Python version (`python --version`):
 - Termux version (from `termux-info` or `pkg show termux-tools`):
 - Android version:
 - Storage backend in use (local / gdrive / github):

@@ -15,8 +15,25 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
   in both directions.
 - Install, update, and uninstall instructions now use `bash install.sh` and the
   two binaries instead of the removed `tsctl` script.
+- The CLI uses one argv parser. The duplicate clap tree and the front-door
+  dispatch wrapper are removed.
+- GitHub, rclone, and local retention prune only real backups. Local uploads
+  stage in a temporary directory and rename into place.
+- The TUI reads a bounded log tail, caches CLI capability probes, strips
+  terminal controls from remote text, and reports the installed CLI version.
 
 ### Fixed
+- Setup now saves every wizard answer, and an empty token answer keeps the
+  stored token.
+- Archive extraction refuses to replace a restore root with a file, restores
+  directory modes, resolves forward hard links, and enforces byte and entry
+  limits.
+- Backup aborts when any archive fails, and restore reports failure when any
+  archive fails to extract.
+- Config import validates keys and ranges; export refuses to overwrite the live
+  config and writes mode 0600.
+- `delete`, `clear-cache`, and daemon schedule errors exit non-zero instead of
+  silently succeeding. A second daemon cannot start while one holds the lock.
 - `.github/workflows/labels.yml` now requests `contents: read`, so checkout can
   clone the repository before syncing labels.
 

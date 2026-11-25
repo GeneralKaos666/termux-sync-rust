@@ -47,6 +47,6 @@ Describe how you tested these changes. Include the Termux environment and storag
 ## Checklist
 
 - [ ] Code follows the existing style in the repository
-- [ ] No new external Python dependencies introduced without prior discussion
+- [ ] No new external Rust dependencies introduced without a note in the PR
 - [ ] Shell scripts pass `shellcheck` without errors
 - [ ] Commit messages are clear and written in the imperative mood

@@ -66,15 +66,6 @@ body:
       required: true
 
   - type: input
-    id: python_version
-    attributes:
-      label: Python version
-      description: Run `python --version`
-      placeholder: "e.g. Python 3.13.1"
-    validations:
-      required: true
-
-  - type: input
     id: termux_version
     attributes:
       label: Termux version
@@ -109,7 +100,7 @@ body:
       label: Installation method
       options:
         - install.sh (build from source)
-        - older Python release
+        - prebuilt release binary
         - other
     validations:
       required: true

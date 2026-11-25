@@ -30,8 +30,8 @@ Use `q` after an operation completes to leave the TUI.
 ## Backup cancel
 
 `Esc` / `c` on a running backup opens a confirmation card. Enter sends SIGINT
-to the child process group; the Python cleanup path removes temporary files and
-incomplete stream parts. The TUI records `cancelled`.
+to the child process group; the cleanup path in `termux-sync-core` removes
+temporary files and incomplete stream parts. The TUI records `cancelled`.
 
 If the process does not exit within 10 seconds, the TUI sends SIGKILL and says
 cleanup may be incomplete. Temporary files can remain under `$PREFIX/tmp` or
@@ -42,8 +42,9 @@ cleanup may be incomplete. Temporary files can remain under `$PREFIX/tmp` or
 Cancellation is allowed during metadata, download, verification, and while the
 plan is open.
 
-Once the first `extract:*` stage starts, cancel and quit are refused. Python
-also ignores SIGINT during extraction. The footer shows `CANNOT CANCEL SAFELY`.
+Once the first `extract:*` stage starts, cancel and quit are refused.
+`termux-sync` also ignores SIGINT during extraction. The footer shows
+`CANNOT CANCEL SAFELY`.
 Wait for completion or failure.
 
 If the TUI process dies during extraction:
@@ -78,8 +79,8 @@ Restore refuses to extract when any archive checksum fails.
 
 - `s` opens the read-only status view.
 - It shows the storage target, compression and backup limit, schedule, TUI and
-  CLI versions, config/log/history paths, and `python3`, `dpkg`, `tar`,
-  `rclone`, `git`, `curl` checks.
+  CLI versions, config/log/history paths, and `dpkg` plus `rclone` for Google
+  Drive.
 - `CLI not found` means `TERMUX_SYNC_BIN` or `termux-sync` could not be run.
 - `rclone` is required only for Google Drive.
 

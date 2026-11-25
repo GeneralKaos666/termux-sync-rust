@@ -1,12 +1,12 @@
-# termux-sync-tui (spike)
+# termux-sync-tui
 
-Ratatui dashboard around the existing `termux-sync` CLI. This is a throwaway
-spike on branch `spike/rust-tui`, not part of the released Python package.
+Ratatui dashboard around the released `termux-sync` CLI. It is part of the Rust
+release and ships with the `termux-sync` binary.
 
 It never reimplements backup logic. Read-only views come from
 `~/.config/termux-sync/config.json`, local `manifest.json` files, and
 `sync.log`. Backup, restore, list, delete and clear-cache run through captured output or
-the Python event protocol; setup and schedule hand the terminal to
+the `termux-sync` event protocol; setup and schedule hand the terminal to
 `termux-sync`.
 
 ## What it shows
@@ -24,7 +24,7 @@ the Python event protocol; setup and schedule hand the terminal to
 - Daemon: shows schedule state, boot script presence, recent daemon log lines,
   and the manual start command. It does not start or stop the daemon.
 - Config: export and import prompts take a path and run the CLI. Export
-  redaction and import validation stay in Python.
+  redaction and import validation run in `termux-sync-core`.
 - Disk check: blank uses the CLI default overview; a path checks that target.
 - Clear logs: confirms in the TUI, then runs `termux-sync clear-logs --yes`.
   An older CLI falls back to the terminal confirmation.
@@ -159,7 +159,7 @@ selection; hold Shift to select text in most terminals.
 Recovery steps for protected restore, cancel timeout, panics, verification
 states, and old CLI installs: [RUNBOOK.md](RUNBOOK.md).
 
-## Spike limits
+## Limits
 
 - Restore cannot be cancelled after extraction starts.
 - Setup and schedule still hand over the terminal after a confirmation card.
