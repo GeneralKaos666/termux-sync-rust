@@ -1,2 +1,0 @@
-#!/bin/sh
-printf 'bash\tinstall\ncoreutils\tinstall\npython\tinstall\n'
