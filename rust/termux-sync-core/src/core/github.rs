@@ -1,5 +1,6 @@
 //! GitHub Releases storage and the streaming part writer.
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -20,6 +21,71 @@ pub const CHUNK_SIZE: u64 = 200 * 1024 * 1024;
 const API: &str = "https://api.github.com";
 const UPLOAD: &str = "https://uploads.github.com";
 const MAX_RETRIES: u32 = 8;
+
+/// True when `value` is exactly two non-empty `[A-Za-z0-9_.-]` segments with no `..`.
+pub fn valid_repo(value: &str) -> bool {
+    let segments: Vec<&str> = value.split('/').collect();
+    segments.len() == 2
+        && segments.iter().all(|segment| {
+            !segment.is_empty()
+                && !segment.contains("..")
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        })
+}
+
+/// Percent-encode everything outside `A-Z a-z 0-9 - . _ ~` with uppercase hex.
+pub fn encode_segment(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        let keep = byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~');
+        if keep {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push_str(&format!("{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Parse a release-list response into a vector, or error on a non-2xx status.
+pub fn releases_from_response(status: u16, body: &str) -> Result<Vec<Value>, String> {
+    if !(200..300).contains(&status) {
+        return Err(format!("GitHub API error {status}: {body}"));
+    }
+    let value: Value =
+        serde_json::from_str(body).map_err(|error| format!("RuntimeError: {error}"))?;
+    value
+        .as_array()
+        .cloned()
+        .ok_or_else(|| "RuntimeError: GitHub releases response was not an array".to_string())
+}
+
+/// True when the remote asset reports exactly `local_size` bytes.
+pub fn asset_matches(remote: &Value, local_size: u64) -> bool {
+    remote.get("size").and_then(Value::as_u64) == Some(local_size)
+}
+
+/// Group `.partNNNN` files in `dest` by their base name, or error when `dest` is unreadable.
+pub fn part_groups(dest: &Path) -> Result<HashMap<String, Vec<PathBuf>>, String> {
+    let mut groups: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    let entries = fs::read_dir(dest).map_err(|error| format!("OSError: {error}"))?;
+    let part_re = Regex::new(r"^(.+)\.part(\d{4})$").map_err(|error| error.to_string())?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some(captures) = part_re.captures(&name)
+            && let Some(base) = captures.get(1)
+        {
+            groups
+                .entry(base.as_str().to_string())
+                .or_default()
+                .push(entry.path());
+        }
+    }
+    Ok(groups)
+}
 
 #[derive(Clone)]
 struct StreamState {
@@ -66,6 +132,11 @@ impl GitHubStorage {
             return Err(
                 "termux_sync.UserError: GitHub is not configured: the token or repository is not set."
                     .to_string(),
+            );
+        }
+        if !valid_repo(&repo) {
+            return Err(
+                "termux_sync.UserError: Invalid GitHub repository; use owner/repo".to_string(),
             );
         }
         Ok(Self {
@@ -212,7 +283,11 @@ impl GitHubStorage {
     fn get_release_by_tag(&self, tag: &str) -> Result<Option<Value>, String> {
         let response = self.request_raw(
             "GET",
-            &format!("{API}/repos/{}/releases/tags/{tag}", self.repo),
+            &format!(
+                "{API}/repos/{}/releases/tags/{}",
+                self.repo,
+                encode_segment(tag)
+            ),
             None,
         )?;
         let status = response.status().as_u16();
@@ -231,15 +306,18 @@ impl GitHubStorage {
             .map_err(|error| format!("RuntimeError: {error}"))
     }
 
-    fn list_releases(&self) -> Vec<Value> {
-        self.api(
+    fn list_releases(&self) -> Result<Vec<Value>, String> {
+        let response = self.request_raw(
             "GET",
-            &format!("/repos/{}/releases?per_page=100", self.repo),
+            &format!("{API}/repos/{}/releases?per_page=100", self.repo),
             None,
-        )
-        .ok()
-        .and_then(|value| value.as_array().cloned())
-        .unwrap_or_default()
+        )?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|error| format!("RuntimeError: {error}"))?;
+        releases_from_response(status, &body)
     }
 
     fn release_for(&self, backup_name: &str) -> Result<Value, String> {
@@ -250,38 +328,58 @@ impl GitHubStorage {
     }
 
     fn split_file(&self, src: &Path, tmp_dir: &Path) -> Result<Vec<PathBuf>, String> {
+        self.split_file_at(src, tmp_dir, CHUNK_SIZE)
+    }
+
+    fn split_file_at(
+        &self,
+        src: &Path,
+        tmp_dir: &Path,
+        chunk: u64,
+    ) -> Result<Vec<PathBuf>, String> {
         let size = fs::metadata(src)
             .map_err(|error| format!("OSError: {error}"))?
             .len();
-        if size <= CHUNK_SIZE {
+        if chunk == 0 {
+            return Err("ValueError: chunk size must be positive".to_string());
+        }
+        if size <= chunk {
             return Ok(vec![src.to_path_buf()]);
         }
+        let free = fs4::available_space(tmp_dir).map_err(|error| format!("OSError: {error}"))?;
+        if free < size {
+            return Err(format!(
+                "termux_sync.UserError: Not enough free space: Only {} is free, but {} is needed.",
+                fmt::human_size(free as i64),
+                fmt::human_size(size as i64)
+            ));
+        }
+        let name = src
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let mut file = File::open(src).map_err(|error| format!("OSError: {error}"))?;
         let mut chunks = Vec::new();
         let mut index = 0u32;
         loop {
-            let mut buffer = vec![0u8; CHUNK_SIZE as usize];
-            let mut read = 0usize;
-            while read < buffer.len() {
-                let got = file
-                    .read(&mut buffer[read..])
-                    .map_err(|error| format!("OSError: {error}"))?;
-                if got == 0 {
-                    break;
-                }
-                read += got;
-            }
-            if read == 0 {
+            let part_path = tmp_dir.join(format!("{name}.part{index:04}"));
+            let output = File::create(&part_path).map_err(|error| format!("OSError: {error}"))?;
+            let mut writer = BufWriter::with_capacity(8 * 1024, output);
+            let copied = std::io::copy(&mut (&mut file).take(chunk), &mut writer)
+                .map_err(|error| format!("OSError: {error}"))?;
+            writer
+                .flush()
+                .map_err(|error| format!("OSError: {error}"))?;
+            drop(writer);
+            if copied == 0 {
+                let _ = fs::remove_file(&part_path);
                 break;
             }
-            let name = src
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let chunk_path = tmp_dir.join(format!("{name}.part{:04}", index));
-            fs::write(&chunk_path, &buffer[..read]).map_err(|error| format!("OSError: {error}"))?;
-            chunks.push(chunk_path);
+            chunks.push(part_path);
             index += 1;
+            if copied < chunk {
+                break;
+            }
         }
         Ok(chunks)
     }
@@ -335,7 +433,22 @@ impl GitHubStorage {
                 return Ok(());
             }
             if status == 422 && body.contains("already_exists") {
-                return Ok(());
+                if let Some(asset) = self.release_assets(release_id)?.into_iter().find(|asset| {
+                    asset.get("name").map(text::py_str).as_deref() == Some(name.as_str())
+                }) {
+                    if asset_matches(&asset, size) {
+                        return Ok(());
+                    }
+                    if let Some(id) = asset.get("id").and_then(Value::as_i64) {
+                        self.api(
+                            "DELETE",
+                            &format!("/repos/{}/releases/assets/{id}", self.repo),
+                            None,
+                        )?;
+                    }
+                    continue;
+                }
+                return Err(self.http_error(status, &body));
             }
             if status >= 500 || status == 429 {
                 last_error = body;
@@ -347,6 +460,23 @@ impl GitHubStorage {
         Err(format!(
             "RuntimeError: Failed to upload {name} after {MAX_RETRIES} attempts: {last_error}"
         ))
+    }
+
+    fn release_assets(&self, release_id: i64) -> Result<Vec<Value>, String> {
+        let response = self.request_raw(
+            "GET",
+            &format!(
+                "{API}/repos/{}/releases/{release_id}/assets?per_page=100",
+                self.repo
+            ),
+            None,
+        )?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|error| format!("RuntimeError: {error}"))?;
+        releases_from_response(status, &body)
     }
 
     pub fn upload(&self, backup_dir: &Path, backup_name: &str) -> Result<String, String> {
@@ -447,8 +577,11 @@ impl GitHubStorage {
     }
 
     pub fn list_backups(&self) -> Vec<Value> {
+        let Ok(releases) = self.list_releases() else {
+            return Vec::new();
+        };
         let mut backups = Vec::new();
-        for release in self.list_releases() {
+        for release in releases {
             let tag = release
                 .get("tag_name")
                 .map(text::py_str)
@@ -581,23 +714,7 @@ impl GitHubStorage {
             progress.emit(done, Some(total), "bytes", Some(&name), true);
         }
 
-        let mut groups: std::collections::HashMap<String, Vec<PathBuf>> =
-            std::collections::HashMap::new();
-        let Ok(entries) = fs::read_dir(dest) else {
-            return Ok(());
-        };
-        let part_re = Regex::new(r"^(.+)\.part(\d{4})$").map_err(|error| error.to_string())?;
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if let Some(captures) = part_re.captures(&name)
-                && let Some(base) = captures.get(1)
-            {
-                groups
-                    .entry(base.as_str().to_string())
-                    .or_default()
-                    .push(entry.path());
-            }
-        }
+        let groups = part_groups(dest)?;
         for (base, mut parts) in groups {
             parts.sort();
             let mut out =
@@ -611,15 +728,17 @@ impl GitHubStorage {
         Ok(())
     }
 
-    pub fn delete_old(&self, max_keep: i64) {
+    pub fn delete_old(&self, max_keep: i64) -> Result<(), String> {
         let mut releases: Vec<Value> = self
-            .list_releases()
+            .list_releases()?
             .into_iter()
             .filter(|release| {
                 release
                     .get("tag_name")
                     .map(text::py_str)
-                    .map(|tag| tag.starts_with("termux_backup_"))
+                    .map(|tag| {
+                        tag.starts_with("termux_backup_") && manifest::valid_backup_name(&tag)
+                    })
                     .unwrap_or(false)
             })
             .collect();
@@ -640,18 +759,23 @@ impl GitHubStorage {
                 .get("tag_name")
                 .map(text::py_str)
                 .unwrap_or_default();
-            let _ = self.api(
+            self.api(
                 "DELETE",
                 &format!("/repos/{}/releases/{id}", self.repo),
                 None,
-            );
+            )?;
             std::thread::sleep(Duration::from_secs(1));
-            let _ = self.api(
+            self.api(
                 "DELETE",
-                &format!("/repos/{}/git/refs/tags/{tag}", self.repo),
+                &format!(
+                    "/repos/{}/git/refs/tags/{}",
+                    self.repo,
+                    encode_segment(&tag)
+                ),
                 None,
-            );
+            )?;
         }
+        Ok(())
     }
 
     pub fn delete_backup(&self, backup_name: &str) -> Result<(), String> {
@@ -813,6 +937,10 @@ mod tests {
         }
     }
 
+    fn test_storage() -> GitHubStorage {
+        storage()
+    }
+
     #[test]
     fn part_names_are_four_digits() {
         assert_eq!(part_name("home.tar.gz", 0), "home.tar.gz.part0000");
@@ -865,5 +993,43 @@ mod tests {
         let (total, digest) = writer.finish().unwrap();
         assert_eq!(total, 0);
         assert_eq!(digest, format!("{:x}", Sha256::new().finalize()));
+    }
+
+    #[test]
+    fn validates_repo_and_encodes_segments() {
+        assert!(valid_repo("owner/repo"));
+        assert!(!valid_repo("owner"));
+        assert!(!valid_repo("owner/repo/extra"));
+        assert!(!valid_repo("../repo"));
+        assert_eq!(encode_segment("a b/c"), "a%20b%2Fc");
+    }
+
+    #[test]
+    fn non_200_release_list_is_an_error() {
+        assert!(releases_from_response(401, r#"{"message":"Bad credentials"}"#).is_err());
+        assert_eq!(releases_from_response(200, "[]").unwrap().len(), 0);
+    }
+
+    #[test]
+    fn existing_asset_must_match_size() {
+        assert!(asset_matches(&json!({"size": 10}), 10));
+        assert!(!asset_matches(&json!({"size": 9}), 10));
+        assert!(!asset_matches(&json!({}), 10));
+    }
+
+    #[test]
+    fn split_uses_small_chunks_without_extra_memory() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("a.bin");
+        fs::write(&src, b"0123456789abcdefghij").unwrap();
+        let storage = test_storage();
+        let parts = storage.split_file_at(&src, temp.path(), 8).unwrap();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(fs::read(&parts[1]).unwrap(), b"89abcdef");
+    }
+
+    #[test]
+    fn missing_download_dir_is_an_error() {
+        assert!(part_groups(&tempfile::tempdir().unwrap().path().join("nope")).is_err());
     }
 }

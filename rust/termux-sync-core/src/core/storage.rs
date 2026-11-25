@@ -426,11 +426,7 @@ impl Storage {
         match self {
             Self::Local(local) => local.delete_old(max_keep),
             Self::Rclone(rclone) => rclone.delete_old(max_keep),
-            Self::GitHub(github) => {
-                // Placeholder until Task 7 makes GitHub pruning fallible.
-                github.delete_old(max_keep);
-                Ok(())
-            }
+            Self::GitHub(github) => github.delete_old(max_keep),
         }
     }
 
