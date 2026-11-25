@@ -395,6 +395,17 @@ fn setup_and_schedule_write_state() {
             .unwrap();
     assert_eq!(cron["enabled"], false);
     let boot = fx.home.join(".termux/boot/termux-sync-daemon.sh");
+    assert!(
+        !boot.exists(),
+        "disabled schedule must remove the boot script"
+    );
+
+    let enable = fx.run(&["schedule"], Some("y\n3\n4\n\n"));
+    assert!(
+        enable.status.success(),
+        "{}",
+        String::from_utf8_lossy(&enable.stdout)
+    );
     assert!(boot.is_file());
     assert!(fs::metadata(&boot).unwrap().permissions().mode() & 0o111 != 0);
 }
@@ -521,4 +532,13 @@ fn restore_succeeds_when_only_device_fifo_refused() {
         String::from_utf8_lossy(&out.stdout)
     );
     assert!(String::from_utf8_lossy(&out.stdout).contains("\"ok\":true"));
+}
+
+#[test]
+fn schedule_survives_broken_cron_file() {
+    let fx = Fixture::new();
+    fs::write(fx.home.join(".config/termux-sync/cron.json"), b"[]").unwrap();
+    let out = fx.run(&["schedule"], Some("n\n"));
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("panicked"));
 }
