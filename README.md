@@ -21,10 +21,16 @@
 
 # termux-sync
 
-Backup and restore your entire Termux environment across devices.
-termux-sync captures your installed packages, home directory, and configuration files into a portable backup that can be fully restored on any device. Backups can be stored locally, uploaded to Google Drive via rclone, or pushed to a private GitHub repository.
+Back up and restore a Termux environment across devices. termux-sync captures the
+installed package list, the home directory, and Termux configuration into a portable
+backup. Store backups on the device, in Google Drive through rclone, or in a private
+GitHub repository as GitHub Releases.
 
-This is the pure Rust implementation of [termux-sync](https://github.com/djunekz/termux-sync), the original Python project by [djunekz](https://github.com/djunekz). The command line, configuration file, backup layout, and manifests are unchanged, so backups made by the original Python release restore here, and backups made here restore with it.
+This repository is the pure Rust implementation of
+[termux-sync](https://github.com/djunekz/termux-sync), the original Python project by
+[djunekz](https://github.com/djunekz). The command line, configuration file, manifest,
+and backup layout are unchanged, so backups move between this build and the original
+in both directions.
 
 ---
 
@@ -36,21 +42,22 @@ This is the pure Rust implementation of [termux-sync](https://github.com/djunekz
 
 | Feature | Description |
 |---|---|
-| Full backup | Packages, home directory, `/usr/etc` config, shared libraries |
-| Full restore | Archive extraction and package reinstallation in one command |
+| Full backup | Installed packages, home directory, and `$PREFIX/etc` configuration |
+| Full restore | Checksum verification, archive extraction, and package reinstallation |
 | Delete backup | Remove a specific backup from any storage backend |
-| Local storage | Save backups on-device or to any mounted path |
-| Google Drive | Upload and retrieve via rclone |
-| GitHub private repo | Push and pull using a Personal Access Token (200 MB per part) |
-| Auto-backup | Built-in daily scheduler at a configurable time |
-| Disk check | View storage usage for any path with per-folder breakdown |
+| Local storage | Save backups on-device or on any mounted path |
+| Google Drive | Upload and retrieve through rclone |
+| GitHub storage | Private repository through GitHub Releases; assets split at 200 MB |
+| Auto-backup | Daily scheduler with a Termux:Boot startup script |
+| Disk check | Storage usage for Termux, home, `$PREFIX`, or a custom path |
 | Cache cleaner | Selective or full cache removal with two-step confirmation |
-| Log viewer | Color-coded log output with configurable line count |
+| Log viewer | Recent log lines with a configurable count |
 | Clear logs | Truncate the log file in one command |
-| Export config | Save configuration to a portable file (tokens redacted) |
-| Import config | Load configuration from a previously exported file |
-| Checksum verification | SHA-256 integrity check performed on every restore |
+| Export config | Save configuration to a portable file with secrets redacted |
+| Import config | Load an exported configuration without overwriting stored secrets |
+| Checksum verification | SHA-256 check performed on every restore |
 | Terminal UI | Ratatui operations cockpit in `termux-sync-tui` |
+| JSON events | `--json-events` progress stream used by the TUI and scripts |
 | Persistent logging | Full log written to `~/.config/termux-sync/sync.log` |
 
 ---
@@ -59,16 +66,17 @@ This is the pure Rust implementation of [termux-sync](https://github.com/djunekz
 
 ```
 Rust 1.100+ (pkg install rust)
-tar (included in Termux)
+dpkg (included in Termux)
 ```
 
-Optional dependencies depending on which storage backend you use:
+Optional dependencies:
 
-- `rclone` — required for Google Drive (`pkg install rclone`)
-- `git` — required for GitHub storage (`pkg install git`)
-- `Termux:Boot` — required for auto-backup on device start (install from F-Droid)
+- `rclone` for Google Drive (`pkg install rclone`)
+- `git` only to clone this repository (`pkg install git`)
+- `Termux:Boot` for auto-backup at device start (install from F-Droid)
 
-The installed binaries have no Python runtime dependency.
+The installed binaries have no Python runtime dependency. Backup archives are built
+by the Rust code, so no external `tar` command is required.
 
 ---
 
@@ -83,8 +91,8 @@ cd ~/termux-sync
 bash install.sh
 ```
 
-`install.sh` builds `termux-sync` and `termux-sync-tui` in release mode and
-installs them into `$PREFIX/bin`.
+`install.sh` builds `termux-sync` and `termux-sync-tui` in release mode and installs
+them into `$PREFIX/bin`.
 
 To keep an existing Python command available as a rollback, run:
 
@@ -100,40 +108,99 @@ The old command is saved as `termux-sync-python` before the Rust binary replaces
 
 Backups are portable across implementations:
 
-- `manifest.json` keeps the same keys (`name`, `files` with `archive` and
-  `checksum`, `packages`, `source`) and the same SHA-256 checksums.
-- Archives keep the same names (`home.tar.gz`, `usr_etc.tar.gz`) and layout.
+- `manifest.json` keeps the same keys (`name`, `date`, `label`, `termux_home`,
+  `termux_usr`, `storage`, `compression`, `version`, `files`, `packages`) and the same
+  SHA-256 checksums.
+- Archive names follow the same pattern (`home.tar.gz`, `usr_etc.tar.gz`), and the
+  extension follows the configured compression.
 - The configuration file stays at `~/.config/termux-sync/config.json` with the same keys.
 
-Any backup produced by the original Python termux-sync or another termux-sync
-build can be listed, verified, and restored by this one. Backups created here
-can also be restored by those builds. No migration step is required.
+Any backup produced by the original Python termux-sync or another termux-sync build
+can be listed, verified, and restored here. Backups created here can also be restored
+by those builds. No migration step is required.
 
 ---
 
 ## Setup
 
-Run the interactive setup wizard before using termux-sync for the first time:
+Run the interactive setup wizard before the first backup:
 
 ```bash
 termux-sync setup
 ```
 
-The wizard will ask you to choose a storage backend and provide any required credentials. You can also optionally customise the exclude patterns during setup.
+The wizard asks for a storage backend, compression, and retention limit. It can also
+customise the exclude patterns.
 
-### GitHub private repo (recommended)
+### Local storage
 
-1. Create a private GitHub repository, for example `my-termux-backup`
-2. Go to **Settings → Developer settings → Personal access tokens → Fine-grained tokens**
-3. Grant the token access to that one repository only, with **Contents: Read and write**
-4. Run `termux-sync setup` and select option **3 (GitHub)**
-5. Enter your token and repository name in the format `username/repo`
+Choose option **1**. The default destination is `~/termux-backups`. Enter another
+path to store backups on a mounted drive.
 
-A fine-grained token scoped to the backup repository is preferred. A classic token with the `repo` scope also works, but it grants read and write access to every repository you own.
+### Google Drive
+
+Install rclone and create a remote named exactly `termux-sync-gdrive`:
+
+```bash
+pkg install rclone
+rclone config
+termux-sync setup
+```
+
+Choose option **2**. Leave the folder ID empty to write to the Drive root, or enter a
+folder ID to keep backups in one folder.
+
+### GitHub storage (recommended)
+
+1. Create a private GitHub repository, for example `my-termux-backup`.
+2. Open **Settings → Developer settings → Personal access tokens → Fine-grained tokens**.
+3. Grant the token access to that repository only, with **Contents: Read and write**.
+4. Run `termux-sync setup` and select option **3 (GitHub)**.
+5. Enter the token, the repository as `owner/repo`, and the branch (default `main`).
+
+Each backup becomes a GitHub Release tagged with the backup name. Archive files are
+release assets, split into 200 MB parts when needed. A classic token with the `repo`
+scope also works, but it grants access to every repository you own.
 
 ---
 
 ## Command Reference
+
+```text
+termux-sync <command> [target] [options]
+```
+
+| Command | Purpose |
+|---|---|
+| `backup` | Create a new backup |
+| `restore` | Restore from a backup |
+| `list` | List available backups |
+| `delete` | Delete a specific backup |
+| `setup` | Interactive configuration wizard |
+| `schedule` | Configure the daily auto-backup |
+| `daemon` | Run the background scheduler used by Termux:Boot |
+| `export-config` | Export configuration with secrets redacted |
+| `import-config` | Import configuration from a file |
+| `status` | Show configuration and environment |
+| `logs` | Show recent log lines |
+| `clear-logs` | Truncate the log file |
+| `check` | Show disk usage |
+| `clear-cache` | Remove temporary and cached files |
+| `tui` | Launch the operations TUI |
+| `help` | Show help |
+
+Global options:
+
+| Option | Description |
+|---|---|
+| `-l, --label LABEL` | Label for the backup |
+| `-n, --name NAME` | Backup name to restore or delete |
+| `--lines N` | Number of log lines to show (default 40) |
+| `--yes` | Skip confirmation for `delete`, `clear-logs`, and `clear-cache` |
+| `--json-events` | Emit JSON progress events on stdout and human text on stderr |
+| `--debug` | Show tracebacks and include TRACE lines in `logs` |
+| `-v, --version` | Print the version and exit |
+| `-h, --help` | Show help and exit |
 
 ### Backup
 
@@ -146,8 +213,11 @@ termux-sync backup --label "before-new-phone"
 
 ```bash
 termux-sync restore                                          # interactive picker
-termux-sync restore --name termux_backup_20240415_143000    # restore specific backup
+termux-sync restore --name termux_backup_20240415_143000     # restore one backup
 ```
+
+Restore verifies the manifest checksums before extraction, extracts the archives, and
+reinstalls the recorded packages.
 
 ### List all backups
 
@@ -155,16 +225,17 @@ termux-sync restore --name termux_backup_20240415_143000    # restore specific b
 termux-sync list
 ```
 
-Displays name, date, label, package count, compression, version, and total size for each backup.
+Shows name, date, label, package count, file count, compression, version, and total
+size for each backup.
 
 ### Delete a backup
 
 ```bash
 termux-sync delete                                          # interactive picker
-termux-sync delete --name termux_backup_20240415_143000     # delete specific backup
+termux-sync delete --name termux_backup_20240415_143000     # delete one backup
 ```
 
-Requires confirmation before deletion. Works with local, Google Drive, and GitHub storage.
+Works with local, Google Drive, and GitHub storage. Use `--yes` to skip the prompt.
 
 ### Setup wizard
 
@@ -184,29 +255,32 @@ termux-sync schedule
 termux-sync status
 ```
 
-Shows storage backend, compression, schedule, app version, available tools, and (for local storage) the number of stored backups.
+Shows the storage backend, compression, retention limit, schedule, app version,
+config and log paths, required tools, and the number of stored local backups.
 
 ### View log entries
 
 ```bash
 termux-sync logs
 termux-sync logs --lines 100
+termux-sync logs --debug
 ```
 
 ### Clear log file
 
 ```bash
 termux-sync clear-logs
+termux-sync clear-logs --yes
 ```
 
-Truncates `~/.config/termux-sync/sync.log` after a single confirmation prompt.
+Truncates `~/.config/termux-sync/sync.log` after confirmation.
 
 ### Check disk usage
 
 ```bash
 termux-sync check                              # overview: Termux root, ~, $PREFIX
-termux-sync check ~                            # home directory + subfolder breakdown
-termux-sync check $PREFIX                      # $PREFIX + subfolder breakdown
+termux-sync check ~                            # home directory with subfolder breakdown
+termux-sync check $PREFIX                      # $PREFIX with subfolder breakdown
 termux-sync check /data/data/com.termux/files  # custom path
 ```
 
@@ -216,9 +290,11 @@ termux-sync check /data/data/com.termux/files  # custom path
 termux-sync clear-cache
 ```
 
-Lists all detected cache directories with sizes. You can clear all of them or select specific entries by number. Two confirmation prompts are shown before anything is deleted.
+Lists the cache directories that exist, with sizes. Clear all of them or select
+entries by number. Two confirmation prompts guard the deletion.
 
-Targets: `$PREFIX/tmp`, `~/.cache`, `~/.npm`, `~/.cargo/registry`, `~/.cargo/git`, `~/__pycache__`, `~/.gradle/caches`, `~/.m2/repository`, `~/go/pkg/mod/cache`
+Targets: `$PREFIX/tmp`, `~/.cache`, `~/.npm`, `~/.cargo/registry`, `~/.cargo/git`,
+`~/__pycache__`, `~/.gradle/caches`, `~/.m2/repository`, `~/go/pkg/mod/cache`.
 
 ### Export configuration
 
@@ -227,7 +303,9 @@ termux-sync export-config
 termux-sync export-config ~/my-backup-config.json
 ```
 
-Saves the current configuration to a JSON file. `github_token` and `encrypt_password` are automatically redacted before writing.
+Without a path, the wizard offers `~/termux-sync-config-export.json`. The export
+replaces `github_token` and `encrypt_password` with `*** REDACTED ***` and writes the
+file with mode `0600`.
 
 ### Import configuration
 
@@ -235,7 +313,8 @@ Saves the current configuration to a JSON file. `github_token` and `encrypt_pass
 termux-sync import-config ~/my-backup-config.json
 ```
 
-Loads configuration from a previously exported file. REDACTED placeholder values are skipped so existing credentials are never overwritten.
+Loads an exported file. Values containing `REDACTED` are skipped, so stored
+credentials are not overwritten.
 
 ### Background daemon
 
@@ -243,7 +322,8 @@ Loads configuration from a previously exported file. REDACTED placeholder values
 termux-sync daemon &
 ```
 
-Run as a background process — triggered automatically by the Termux:Boot script written by `termux-sync schedule`.
+Runs the scheduler in the background. The Termux:Boot script written by
+`termux-sync schedule` starts it at boot. Only one daemon can hold the lock.
 
 ---
 
@@ -255,29 +335,44 @@ Configure a daily automatic backup:
 termux-sync schedule
 ```
 
-To run automatically when your device boots, install [Termux:Boot](https://f-droid.org/en/packages/com.termux.boot/) from F-Droid. The schedule wizard writes the required boot script automatically:
+The wizard stores the schedule in `~/.config/termux-sync/cron.json` and writes
+`~/.termux/boot/termux-sync-daemon.sh` when auto-backup is enabled. Install
+[Termux:Boot](https://f-droid.org/en/packages/com.termux.boot/) from F-Droid and open
+it once, then review the generated script:
 
 ```bash
-cat ~/.termux/boot/termux-sync-daemon.sh   # view generated boot script
-termux-sync daemon &                        # or start the daemon manually
+cat ~/.termux/boot/termux-sync-daemon.sh
+termux-sync daemon &
 ```
 
 ---
 
 ## What Gets Backed Up
 
-| Component | Path | Description |
+| Component | Source | Description |
 |---|---|---|
-| Package list | `dpkg --get-selections` | All installed packages |
-| Home directory | `~` | Dotfiles, scripts, projects |
-| Termux config | `$PREFIX/etc` | sources.list, motd, and other config files |
-| Shared libraries | `$PREFIX/lib` | Libraries installed by Termux packages |
+| Package list | `dpkg --get-selections` | Installed packages, recorded in `packages.txt` |
+| Home directory | `$HOME` | Dotfiles, scripts, and projects |
+| Termux config | `$PREFIX/etc` | `sources.list`, `motd`, and other configuration |
 
-The following paths are excluded from the home directory backup by default:
+Shared libraries, installed binaries, and caches are not archived. Packages are
+reinstalled from the package list during restore.
 
-`.cache`, `.npm`, `__pycache__`, `node_modules`, `.gradle`, `.android`, `.thumbnails`, `DCIM`, `Movies`, `Music`, `.local/share/Trash`, `.local/lib`, `.java`, `.m2`, `.ivy2`, `go/pkg`, `.rustup/toolchains`, `.cargo/registry`, `.cargo/git`
+These paths are excluded from the home directory archive by default:
 
-You can customise exclusions in `~/.config/termux-sync/config.json` or interactively during `termux-sync setup`.
+```text
+.cache  .npm  __pycache__  node_modules  .gradle  .android  .thumbnails
+DCIM  Movies  Music  .local/share/Trash  .local/lib  .java  .m2  .ivy2
+go/pkg  .rustup/toolchains  .cargo/registry  .cargo/git
+```
+
+`~/.config/termux-sync` is always excluded, so the configuration and log do not leak
+into the archive. Change the other exclusions in `~/.config/termux-sync/config.json`
+or during `termux-sync setup`.
+
+Exclude patterns match whole path components at any depth: `.cache` excludes
+`~/.cache` but not `~/notes.cache`. Wildcards are not supported, so `*.log` matches
+nothing. A leading `./` is ignored.
 
 ---
 
@@ -290,7 +385,7 @@ Location: `~/.config/termux-sync/config.json`
   "storage": "github",
   "local_path": "~/termux-backups",
   "gdrive_folder_id": "",
-  "github_token": "ghp_...",
+  "github_token": "github_pat_...",
   "github_repo": "username/my-termux-backup",
   "github_branch": "main",
   "compression": "gz",
@@ -311,58 +406,64 @@ Location: `~/.config/termux-sync/config.json`
 |---|---|---|
 | `storage` | `local` | Storage backend: `local`, `gdrive`, or `github` |
 | `local_path` | `~/termux-backups` | Path for local backups |
-| `gdrive_folder_id` | *(empty)* | Google Drive folder ID (leave empty for root) |
-| `github_token` | *(empty)* | GitHub Personal Access Token with `Contents: Read and write` on the backup repository |
-| `github_repo` | *(empty)* | Repository in `owner/repo` format |
-| `github_branch` | `main` | Branch to push backups to |
+| `gdrive_folder_id` | empty | Google Drive folder ID; empty uses the Drive root |
+| `github_token` | empty | GitHub token with `Contents: Read and write` |
+| `github_repo` | empty | Repository in `owner/repo` format |
+| `github_branch` | `main` | Branch used as the release target |
 | `compression` | `gz` | Compression: `gz` (fast), `bz2` (balanced), `xz` (best) |
-| `exclude_patterns` | *(list)* | Paths excluded from home directory archive |
-
-Patterns are literal paths matched on whole path components, at any depth: `.cache` excludes `~/.cache` but not `~/notes.cache`. There is no wildcard support, so `*.log` matches nothing. A leading `./` is ignored.
-| `max_backups` | `5` | Maximum number of backups to keep before pruning |
-| `encrypt` | `false` | Enable archive encryption (planned feature) |
+| `exclude_patterns` | list above | Paths excluded from the home archive |
+| `max_backups` | `5` | Backups kept before pruning |
+| `encrypt` | `false` | Reserved for compatibility; encryption is not implemented |
+| `encrypt_password` | empty | Reserved for compatibility |
 
 ---
 
 ## Environment Variables
 
-A reference file is provided at [`.env.example`](.env.example). All variables are optional; Termux sets sensible defaults.
+A reference file is provided at [`.env.example`](.env.example). All variables are
+optional; Termux sets sensible defaults.
 
 | Variable | Default | Description |
 |---|---|---|
-| `TERMUX_SYNC_DEBUG` | *(empty)* | Set to any non-empty value to enable debug output |
+| `TERMUX_SYNC_DEBUG` | empty | Any non-empty value enables debug output |
 | `PREFIX` | `/data/data/com.termux/files/usr` | Termux installation prefix |
 | `HOME` | `/data/data/com.termux/files/home` | Home directory used as the backup source |
-| `TMPDIR` | `/data/data/com.termux/files/usr/tmp` | Temporary directory used while building and restoring archives |
+| `TMPDIR` | `/data/data/com.termux/files/usr/tmp` | Temporary directory for archive work |
 
 ---
 
 ## Backup Structure
 
-Each backup is a directory containing:
+A local backup is a directory with this layout:
 
-```
-backups/
+```text
+termux-backups/
 └── termux_backup_20240415_143000/
     ├── manifest.json       metadata, checksums, package list, source paths, version
-    ├── packages.txt        plain-text package list for reference
+    ├── packages.txt        plain-text package list
     ├── home.tar.gz         home directory archive
-    └── usr_etc.tar.gz      Termux config archive (/usr/etc)
+    └── usr_etc.tar.gz      Termux configuration archive ($PREFIX/etc)
 ```
 
-`manifest.json` records the termux-sync version, compression type, per-archive SHA-256 checksums, and source paths. The restore command reads this file to verify integrity before extracting anything.
+Archive names use the configured compression: `home.tar.gz`, `home.tar.bz2`, or
+`home.tar.xz`. On GitHub, each archive becomes a release asset; archives larger than
+200 MB are uploaded as `.part0001`, `.part0002`, and so on, then joined on download.
+
+`manifest.json` records the termux-sync version, compression, label, package list,
+per-archive size, SHA-256 checksum, and source path. Restore reads this file and
+verifies every checksum before extracting anything.
 
 ---
 
 ## Migrating to a New Device
 
-**On the old device** — create a labeled backup:
+**On the old device**, create a labeled backup:
 
 ```bash
 termux-sync backup --label "migration"
 ```
 
-**On the new device** — install termux-sync and restore:
+**On the new device**, install termux-sync and restore:
 
 ```bash
 pkg install rust git
@@ -377,7 +478,8 @@ termux-sync setup
 termux-sync restore
 ```
 
-The restore process verifies checksums, extracts the archives, and reinstalls all packages automatically. Backups from the original Python termux-sync work here without any conversion.
+Restore verifies checksums, extracts the archives, and reinstalls all packages.
+Backups from the original Python termux-sync work without conversion.
 
 ---
 
@@ -385,50 +487,52 @@ The restore process verifies checksums, extracts the archives, and reinstalls al
 
 | Problem | Solution |
 |---|---|
-| `rclone not found` | Run `pkg install rclone` then `rclone config` to authenticate |
-| GitHub 401 error | Check that your token has the `repo` scope and has not expired |
-| Archive too large | Add paths to `exclude_patterns` in `config.json`, or use `clear-cache` first |
-| Restore overwrites wrong path | Check the `source` field in the backup's `manifest.json` |
+| `rclone not found` | Run `pkg install rclone`, then `rclone config`, and name the remote `termux-sync-gdrive` |
+| GitHub 401 error | Check that the token is valid and has `Contents: Read and write` on the backup repository |
+| GitHub 403 error | Confirm the token can read the repository and that fine-grained access includes it |
+| Archive too large | Add paths to `exclude_patterns`, or run `termux-sync clear-cache` first |
+| Restore overwrites the wrong path | Check the source path in the backup's `manifest.json` |
 | `termux-sync: command not found` | Re-run `bash install.sh` from the clone |
 | `cargo: command not found` | Run `pkg install rust` |
-| Daemon does not start on boot | Verify Termux:Boot is installed from F-Droid and opened at least once |
-| GitHub upload fails on large backup | Add paths to `exclude_patterns` to reduce backup size |
+| Daemon does not start on boot | Install Termux:Boot from F-Droid and open it once |
+| GitHub upload fails on a large backup | Add paths to `exclude_patterns` to reduce the backup size |
 | Cache not cleared | Run `termux-sync clear-cache` and confirm both prompts |
-| Config lost after reinstall | Use `export-config` before uninstalling; `import-config` after reinstalling |
-| Old backups not pruned on GDrive | Fixed in v1.2.0 — update to the current build |
+| Config lost after reinstall | Run `export-config` before uninstalling and `import-config` afterwards |
+| Old backups not pruned on Drive | Fixed in v1.2.0; update to the current build |
 
 ---
 
 ## Project Structure
 
-```
+```text
 termux-sync-rust/
 ├── app/                    termux-sync CLI
 ├── core/                   shared core library
 ├── tui/                    Ratatui operations TUI
 ├── app-cases/              recorded CLI behavior cases (trycmd)
-├── fixtures/               fixture homes, prefixes and tool stubs
-├── install.sh              native release build and install
-├── cutover.sh              interactive switch from an installed Python command
-├── Cargo.toml              workspace manifest
+├── fixtures/               fixture homes, prefixes, and tool stubs
 ├── assets/                 README logo and command menu
 ├── docs/                   design records and plans
-├── CHANGELOG.md            Version history
-├── FAQ.md                  Frequently asked questions
-└── README.md               This file
+├── install.sh              release build and install for both binaries
+├── cutover.sh              switch from an installed Python command
+├── smoke-github.sh         live GitHub storage smoke test
+├── Cargo.toml              workspace manifest
+├── CHANGELOG.md            version history
+├── FAQ.md                  frequently asked questions
+└── README.md               this file
 ```
 
 ---
 
 ## Optional Rust TUI
 
-The `tui/` directory contains an optional Ratatui dashboard and operations
-cockpit. It shares the Rust core and is installed by `install.sh`.
+The `tui/` directory contains a Ratatui dashboard and operations cockpit. It shares
+the Rust core and is installed by `install.sh`.
 
-It streams backup and restore through `termux-sync --json-events`, shows live
-stages and logs, verifies backups, lists remote backups, and gates restore
-behind a package diff and typed confirmation. It also keeps a local operation
-history, filters backups, prompts for labels and supports ASCII icons.
+The TUI streams backup and restore through `termux-sync --json-events`, shows live
+stages and logs, verifies backups, lists remote backups, and gates restore behind a
+package diff and typed confirmation. It also keeps a local operation history, filters
+backups, prompts for labels, and supports ASCII icons.
 
 Requirements:
 
@@ -447,25 +551,25 @@ Or run the standalone alias:
 termux-sync-tui
 ```
 
-Install both with `bash install.sh`.
-Use `--ascii` or `TERMUX_SYNC_TUI_ASCII=1` for terminals whose font renders
-the default icons badly.
+Use `--ascii` or `TERMUX_SYNC_TUI_ASCII=1` when the terminal font renders the default
+icons badly.
 
-If the installed `termux-sync` is too old for events, backup and restore
-refuse with a clear message; `L` falls back to captured text output. See [tui/README.md](tui/README.md)
-for keys, cancellation rules, and layout behavior. Recovery steps live in
-[tui/RUNBOOK.md](tui/RUNBOOK.md).
+If the installed `termux-sync` is too old for events, backup and restore refuse with
+a clear message, and `L` falls back to captured text output. See
+[tui/README.md](tui/README.md) for keys, cancellation rules, and layout behavior.
+Recovery steps live in [tui/RUNBOOK.md](tui/RUNBOOK.md).
 
-The TUI has its own workflow in `.github/workflows/tui.yml`. The workflow also cross-checks Android targets with the NDK; prebuilt
-release binaries are a later distribution task.
+The TUI has its own workflow in `.github/workflows/tui.yml`. That workflow also
+cross-checks Android targets with the NDK. Prebuilt release binaries remain a later
+distribution task.
 
 ---
 
 ## Contributing
 
-Contributions are welcome. Please read [CONTRIBUTING](CONTRIBUTING.md) before opening a pull request.
-
-For bug reports and feature requests, use the GitHub issue tracker and follow the provided templates.
+Contributions are welcome. Read [CONTRIBUTING](CONTRIBUTING.md) before opening a pull
+request. For bug reports and feature requests, use the GitHub issue tracker and follow
+the provided templates.
 
 ---
 
