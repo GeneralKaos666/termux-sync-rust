@@ -101,6 +101,7 @@ pub fn delete(cfg: &Value, backup_name: &str, assume_yes: bool) -> Result<Value,
             .unwrap_or(&error);
             render::print_line(&format!("  ✗ Failed to delete backup: {shown}"));
             logging::log("ERROR", &format!("Delete failed for {cleaned}: {shown}"));
+            return Err(error);
         }
     }
     Ok(Value::Null)
@@ -790,26 +791,36 @@ pub fn clear_cache(assume_yes: bool) -> Result<Value, String> {
         render::print_line("  Aborted.");
         return Ok(Value::Null);
     }
-    let mut cleared = 0;
+    let mut cleared = 0i64;
+    let mut failures: Vec<String> = Vec::new();
     for index in selected {
         let (label, path, size) = &existing[index];
-        if let Ok(entries) = fs::read_dir(path) {
-            for entry in entries.flatten() {
-                let child = entry.path();
-                let result = if child.is_dir() && !child.is_symlink() {
-                    fs::remove_dir_all(&child)
-                } else {
-                    fs::remove_file(&child)
-                };
-                if let Err(error) = result {
-                    logging::log(
-                        "WARNING",
-                        &format!("Could not remove {}: {error}", child.display()),
-                    );
+        let mut cleared_here = 0u64;
+        match fs::read_dir(path) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let child = entry.path();
+                    match remove_cache_entry(&child) {
+                        Ok(bytes) => cleared_here += bytes,
+                        Err(error) => {
+                            logging::log(
+                                "WARNING",
+                                &format!("Could not remove {}: {error}", child.display()),
+                            );
+                            failures.push(format!("{}: {error}", child.display()));
+                        }
+                    }
                 }
             }
+            Err(error) => {
+                logging::log(
+                    "WARNING",
+                    &format!("Could not read {}: {error}", path.display()),
+                );
+                failures.push(format!("{}: {error}", path.display()));
+            }
         }
-        cleared += size;
+        cleared += cleared_here as i64;
         logging::log(
             "INFO",
             &format!(
@@ -824,7 +835,24 @@ pub fn clear_cache(assume_yes: bool) -> Result<Value, String> {
         "  Done! Freed approximately {}",
         fmt::human_size(cleared)
     ));
+    if !failures.is_empty() {
+        return Err(format!(
+            "RuntimeError: Could not remove: {}",
+            failures.join(", ")
+        ));
+    }
     Ok(Value::Null)
+}
+
+fn remove_cache_entry(path: &Path) -> Result<u64, String> {
+    let size = fsutil::dir_size(path).max(0) as u64;
+    let metadata = fs::symlink_metadata(path).map_err(|error| format!("OSError: {error}"))?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir_all(path).map_err(|error| format!("OSError: {error}"))?;
+    } else {
+        fs::remove_file(path).map_err(|error| format!("OSError: {error}"))?;
+    }
+    Ok(size)
 }
 
 fn ensure_not_live_config(out: &Path) -> Result<(), String> {
@@ -947,4 +975,21 @@ pub fn import_config(input_path: &str) -> Result<Value, String> {
         &format!("Config imported from {}", source.display()),
     );
     Ok(Value::Null)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn failed_removal_is_an_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("cache");
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub/file"), b"data").unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+        assert!(remove_cache_entry(&dir).is_err());
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    }
 }

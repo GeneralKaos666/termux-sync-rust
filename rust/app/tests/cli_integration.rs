@@ -460,7 +460,7 @@ fn parse_errors_and_version() {
     assert_eq!(tui_no_tty.status.code(), Some(2));
 
     let missing_delete = fx.run(&["delete", "--name", "missing", "--yes"], None);
-    assert!(missing_delete.status.success());
+    assert_eq!(missing_delete.status.code(), Some(1));
     let text = String::from_utf8_lossy(&missing_delete.stdout);
     assert!(text.contains("Failed to delete backup"));
     assert!(!text.contains("FileNotFoundError"));
