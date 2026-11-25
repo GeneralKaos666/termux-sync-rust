@@ -90,6 +90,124 @@ pub fn load_config() -> Result<Value, String> {
     Ok(data)
 }
 
+fn patch_error(detail: &str) -> String {
+    format!("termux_sync.UserError: Invalid config: {detail}")
+}
+
+fn require_string(key: &str, value: &Value) -> Result<(), String> {
+    if value.is_string() {
+        Ok(())
+    } else {
+        Err(patch_error(&format!("{key} must be a string")))
+    }
+}
+
+/// Validate an imported config patch. Accepts only known keys, each with its own
+/// rule. Unknown keys are rejected so a stale or hostile export cannot smuggle
+/// settings in.
+pub fn validate_patch(value: &Value) -> Result<(), String> {
+    let Value::Object(map) = value else {
+        return Err(patch_error("config must be a JSON object"));
+    };
+    for (key, value) in map {
+        match key.as_str() {
+            "storage" => {
+                let Some(storage) = value.as_str() else {
+                    return Err(patch_error("storage must be a string"));
+                };
+                if !matches!(storage, "local" | "gdrive" | "github") {
+                    return Err(patch_error(&format!(
+                        "storage must be one of local, gdrive, github (got '{storage}')"
+                    )));
+                }
+            }
+            "local_path" => require_string(key, value)?,
+            "gdrive_folder_id" => {
+                let Some(folder) = value.as_str() else {
+                    return Err(patch_error("gdrive_folder_id must be a string"));
+                };
+                if !folder.is_empty()
+                    && (folder.starts_with('/')
+                        || folder.split('/').any(|segment| segment == "..")
+                        || folder.contains(':'))
+                {
+                    return Err(patch_error(
+                        "gdrive_folder_id must not start with '/', contain a '..' segment, or contain ':'",
+                    ));
+                }
+            }
+            "github_token" => require_string(key, value)?,
+            "github_repo" => {
+                let Some(repo) = value.as_str() else {
+                    return Err(patch_error("github_repo must be a string"));
+                };
+                if !repo.is_empty() {
+                    let mut parts = repo.split('/');
+                    let owner = parts.next().unwrap_or("");
+                    let name = parts.next().unwrap_or("");
+                    let valid_char =
+                        |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-');
+                    if parts.next().is_some()
+                        || owner.is_empty()
+                        || name.is_empty()
+                        || !owner.chars().all(valid_char)
+                        || !name.chars().all(valid_char)
+                    {
+                        return Err(patch_error(
+                            "github_repo must be 'owner/name' using letters, digits, '.', '_' or '-'",
+                        ));
+                    }
+                }
+            }
+            "github_branch" => {
+                let Some(branch) = value.as_str() else {
+                    return Err(patch_error("github_branch must be a string"));
+                };
+                if branch.is_empty() || branch.chars().any(|c| c.is_whitespace() || c.is_control())
+                {
+                    return Err(patch_error(
+                        "github_branch must be non-empty with no whitespace or control characters",
+                    ));
+                }
+            }
+            "compression" => {
+                let Some(compression) = value.as_str() else {
+                    return Err(patch_error("compression must be a string"));
+                };
+                if !matches!(compression, "gz" | "bz2" | "xz") {
+                    return Err(patch_error(&format!(
+                        "compression must be one of gz, bz2, xz (got '{compression}')"
+                    )));
+                }
+            }
+            "max_backups" => {
+                let Some(number) = value.as_i64() else {
+                    return Err(patch_error("max_backups must be an integer"));
+                };
+                if number < 1 {
+                    return Err(patch_error("max_backups must be at least 1"));
+                }
+            }
+            "exclude_patterns" => {
+                let Some(items) = value.as_array() else {
+                    return Err(patch_error("exclude_patterns must be an array of strings"));
+                };
+                if items.iter().any(|item| !item.is_string()) {
+                    return Err(patch_error("exclude_patterns must be an array of strings"));
+                }
+            }
+            "encrypt" => {
+                if !value.is_boolean() {
+                    return Err(patch_error("encrypt must be a boolean"));
+                }
+            }
+            "encrypt_password" => require_string(key, value)?,
+            _ => return Err(patch_error(&format!("Unknown config key: {key}"))),
+        }
+    }
+    Ok(())
+}
+
 pub fn retention_limit(cfg: &Value) -> i64 {
     cfg.get("max_backups")
         .and_then(fmt::py_int)
@@ -138,5 +256,16 @@ mod tests {
         assert_eq!(retention_limit(&json!({"max_backups": 0})), 1);
         assert_eq!(retention_limit(&json!({"max_backups": -3})), 1);
         assert_eq!(retention_limit(&json!({})), 5);
+    }
+
+    #[test]
+    fn validate_patch_rejects_bad_values() {
+        assert!(validate_patch(&json!({"max_backups": 0})).is_err());
+        assert!(validate_patch(&json!({"storage": "dropbox"})).is_err());
+        assert!(validate_patch(&json!({"compression": "zip"})).is_err());
+        assert!(validate_patch(&json!({"github_repo": "owner"})).is_err());
+        assert!(validate_patch(&json!({"gdrive_folder_id": "../x"})).is_err());
+        assert!(validate_patch(&json!({"unknown_key": 1})).is_err());
+        assert!(validate_patch(&json!({"max_backups": 3, "storage": "local"})).is_ok());
     }
 }

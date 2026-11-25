@@ -827,6 +827,16 @@ pub fn clear_cache(assume_yes: bool) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
+fn ensure_not_live_config(out: &Path) -> Result<(), String> {
+    let live = paths::resolve_lenient(&paths::config_file());
+    if paths::resolve_lenient(out) == live {
+        return Err(
+            "termux_sync.UserError: Refusing to export over the live config file".to_string(),
+        );
+    }
+    Ok(())
+}
+
 pub fn export_config(output_path: &str) -> Result<Value, String> {
     render::print_section("EXPORT CONFIG", "Save configuration to a file");
     let cfg = config::load_config()?;
@@ -860,7 +870,8 @@ pub fn export_config(output_path: &str) -> Result<Value, String> {
         output_path.to_string()
     };
     let out = paths::expand_user(&path);
-    pyjson::write_json_pretty_ascii(&out, &Value::Object(safe))?;
+    ensure_not_live_config(&out)?;
+    pyjson::write_json_private(&out, &Value::Object(safe))?;
     render::print_line(&format!("  ✓ Configuration exported to: {}", out.display()));
     render::print_line("⚠ Token and password fields have been redacted from the export.");
     logging::log("INFO", &format!("Config exported to {}", out.display()));
@@ -900,7 +911,15 @@ pub fn import_config(input_path: &str) -> Result<Value, String> {
             source.display()
         ));
     };
-    let mut existing = config::load_config()?;
+    config::validate_patch(&Value::Object(new_cfg.clone()))?;
+    let mut existing = match config::load_config() {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            render::print_line(&format!("  Warning: {error}"));
+            render::print_line("  Starting from the default configuration.");
+            Value::Object(config::default_config())
+        }
+    };
     let Some(existing_map) = existing.as_object_mut() else {
         return Err("AttributeError: config must be a JSON object".to_string());
     };

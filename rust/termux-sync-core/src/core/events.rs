@@ -31,10 +31,29 @@ pub fn enable(secrets: Vec<String>) {
     }
 }
 
+/// Store redaction secrets without turning on event output. This lets logging
+/// redact even when the command itself does not need a full config load.
+pub fn set_secrets(secrets: Vec<String>) {
+    let secrets = secrets
+        .into_iter()
+        .filter(|secret| !secret.is_empty())
+        .collect();
+    if let Ok(mut guard) = events().lock() {
+        if let Some(state) = guard.as_mut() {
+            state.secrets = secrets;
+        } else {
+            *guard = Some(EventState {
+                secrets,
+                stdout_events: false,
+            });
+        }
+    }
+}
+
 pub fn enabled() -> bool {
     events()
         .lock()
-        .map(|guard| guard.is_some())
+        .map(|guard| guard.as_ref().is_some_and(|state| state.stdout_events))
         .unwrap_or(false)
 }
 

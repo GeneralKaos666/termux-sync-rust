@@ -218,25 +218,40 @@ pub fn run_from_argv() -> ExitCode {
         opts.target = positionals[1].clone();
     }
 
-    let cfg = match port::load_config() {
-        Ok(cfg) => cfg,
-        Err(error) => return report_error(&error),
+    if let Ok(cfg) = port::load_config() {
+        let _ = port::set_secrets(cfg);
+    }
+    let needs_config = matches!(
+        command.as_str(),
+        "backup" | "restore" | "list" | "delete" | "status" | "daemon"
+    );
+    let redaction_safe = !matches!(
+        command.as_str(),
+        "setup" | "import-config" | "export-config" | "logs"
+    );
+    let cfg = if needs_config || (opts.json_events && redaction_safe) {
+        match port::load_config() {
+            Ok(cfg) => Some(cfg),
+            Err(error) => return report_error(&error),
+        }
+    } else {
+        None
     };
     if opts.json_events {
-        let _ = port::enable_event_mode(cfg.clone());
+        let _ = port::enable_event_mode(cfg.clone().unwrap_or_default());
     }
 
     let result = match command.as_str() {
-        "backup" => port::cmd_backup(cfg, opts.label.clone()),
-        "restore" => port::cmd_restore(cfg, opts.name.clone()),
-        "list" => port::cmd_list(cfg),
-        "delete" => port::cmd_delete(cfg, opts.name.clone(), opts.yes),
+        "backup" => port::cmd_backup(cfg.clone().unwrap_or_default(), opts.label.clone()),
+        "restore" => port::cmd_restore(cfg.clone().unwrap_or_default(), opts.name.clone()),
+        "list" => port::cmd_list(cfg.clone().unwrap_or_default()),
+        "delete" => port::cmd_delete(cfg.clone().unwrap_or_default(), opts.name.clone(), opts.yes),
         "setup" => port::cmd_setup(),
         "schedule" => port::cmd_schedule(),
-        "daemon" => port::cmd_daemon(cfg),
+        "daemon" => port::cmd_daemon(cfg.clone().unwrap_or_default()),
         "export-config" => port::cmd_export_config(opts.target.clone()),
         "import-config" => port::cmd_import_config(opts.target.clone()),
-        "status" => port::cmd_status(cfg),
+        "status" => port::cmd_status(cfg.clone().unwrap_or_default()),
         "logs" => port::cmd_logs(opts.lines),
         "clear-logs" => port::cmd_clear_logs(opts.yes),
         "check" => port::cmd_check(opts.target.clone()),

@@ -71,6 +71,18 @@ pub fn enable_event_mode(cfg: Value) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
+/// Store redaction secrets from a config without enabling event mode.
+pub fn set_secrets(cfg: Value) -> Result<Value, String> {
+    let secrets = ["github_token", "encrypt_password"]
+        .iter()
+        .filter_map(|key| cfg.get(*key))
+        .map(text::py_str)
+        .filter(|secret| !secret.is_empty())
+        .collect();
+    events::set_secrets(secrets);
+    Ok(Value::Null)
+}
+
 /// Port of `print_error` (`src/termux_sync/__init__.py:391`).
 pub fn print_error(
     title: String,

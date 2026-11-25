@@ -38,6 +38,40 @@ pub fn write_json_pretty_ascii(path: &Path, value: &Value) -> Result<(), String>
     fs::write(path, text).map_err(|error| format!("OSError: {error}"))
 }
 
+/// Write JSON atomically (temp file + rename) with mode 0600, so a secret-bearing
+/// export is never readable by other users and a crash cannot leave a half file.
+pub fn write_json_private(path: &Path, value: &Value) -> Result<(), String> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let text = to_string_pretty_ascii(value)?;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|error| format!("OSError: {error}"))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config");
+    let tmp = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
+    let mut handle = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|error| format!("OSError: {error}"))?;
+    handle
+        .write_all(text.as_bytes())
+        .map_err(|error| format!("OSError: {error}"))?;
+    drop(handle);
+    fs::rename(&tmp, path).map_err(|error| format!("OSError: {error}"))?;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    Ok(())
+}
+
 /// Escape non-ASCII code points inside JSON string literals, leaving structure alone.
 fn escape_non_ascii(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -96,5 +130,17 @@ mod tests {
     #[test]
     fn strips_bom() {
         assert_eq!(strip_utf8_bom(&[0xef, 0xbb, 0xbf, b'{']), b"{");
+    }
+
+    #[test]
+    fn private_writer_uses_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        write_json_private(&path, &json!({"a": 1})).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

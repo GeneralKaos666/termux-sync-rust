@@ -413,6 +413,21 @@ fn setup_keeps_stored_token_on_empty_answer() {
 }
 
 #[test]
+fn setup_recovers_from_broken_config() {
+    let fx = Fixture::new();
+    fs::write(fx.home.join(".config/termux-sync/config.json"), b"{").unwrap();
+    let out = fx.run(&["setup"], Some("1\n\n\n\nn\n"));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let _: Value =
+        serde_json::from_slice(&fs::read(fx.home.join(".config/termux-sync/config.json")).unwrap())
+            .unwrap();
+}
+
+#[test]
 fn parse_errors_and_version() {
     let fx = Fixture::new();
     let version = fx.run(&["--version"], None);
