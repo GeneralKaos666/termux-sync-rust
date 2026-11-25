@@ -1185,7 +1185,12 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
             &mut on_member,
         ) {
             Ok(result) => {
-                let failed = result.extracted == 0 || !result.warnings.is_empty();
+                let extracted_none = result.extracted == 0;
+                let fatal = extracted_none
+                    || result
+                        .warnings
+                        .iter()
+                        .any(|warning| !archive::is_ignorable_warning(warning));
                 for warning in result.warnings {
                     events::emit(
                         "log",
@@ -1195,18 +1200,18 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
                         ],
                     );
                 }
-                if failed {
+                if fatal {
                     failed_archives.push(archive_name.clone());
+                    let message = if extracted_none {
+                        format!("Archive extracted no entries and may be corrupt: {archive_name}")
+                    } else {
+                        format!("Archive extracted with errors: {archive_name}")
+                    };
                     events::emit(
                         "log",
                         vec![
                             ("level", Value::String("ERROR".to_string())),
-                            (
-                                "message",
-                                Value::String(format!(
-                                    "Archive extracted no entries and may be corrupt: {archive_name}"
-                                )),
-                            ),
+                            ("message", Value::String(message)),
                         ],
                     );
                     events::emit(

@@ -72,6 +72,13 @@ pub struct ExtractResult {
 /// Hard error once an archive's file data would exceed the configured budget.
 const SIZE_LIMIT_ERROR: &str = "Archive exceeds size limit";
 
+/// True when an extraction warning is benign enough to keep restoring. Device and
+/// FIFO entries are deliberately archived but skipped on extraction; every other
+/// warning (escape, traversal, unreadable member, failed write) is fatal.
+pub fn is_ignorable_warning(warning: &str) -> bool {
+    warning.starts_with("Refusing device/fifo entry")
+}
+
 fn exclude_prefix(pattern: &str) -> String {
     let mut pat = pattern.trim();
     while let Some(rest) = pat.strip_prefix("./") {
@@ -789,6 +796,19 @@ mod tests {
         assert!(!dest.join("home/link").exists());
         assert!(!dest.join("home/fifo").exists());
         assert!(result.warnings.len() >= 4, "{:?}", result.warnings);
+    }
+
+    #[test]
+    fn ignorable_warning_matches_only_device_fifo_refusals() {
+        assert!(is_ignorable_warning(
+            "Refusing device/fifo entry in archive: \"home/fifo\""
+        ));
+        assert!(!is_ignorable_warning(
+            "Path traversal attempt in archive: \"../evil.txt\""
+        ));
+        assert!(!is_ignorable_warning(
+            "Could not read archive member: failed to read entire block"
+        ));
     }
 
     #[test]
