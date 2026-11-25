@@ -432,11 +432,8 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
             seen += size;
             throttle.emit(seen, None, "bytes", Some(&path.to_string_lossy()), false);
         };
-        #[cfg(debug_assertions)]
         let injected_failure =
             std::env::var("TERMUX_SYNC_TEST_ARCHIVE_FAIL").is_ok_and(|want| want == key);
-        #[cfg(not(debug_assertions))]
-        let injected_failure = false;
 
         let archive_result: Result<(String, u64, String), String> = if injected_failure {
             Err("injected archive failure".to_string())
@@ -527,6 +524,9 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
                     "ERROR",
                     &format!("Archive failed for {}: {error}", source.display()),
                 );
+                if let Storage::GitHub(github) = &storage {
+                    github.abort_stream(&backup_name);
+                }
                 cleanup(&tmp_dir);
                 return Err(error);
             }
