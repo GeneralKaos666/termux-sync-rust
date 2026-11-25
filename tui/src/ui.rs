@@ -545,7 +545,7 @@ fn render_operation_log(frame: &mut Frame, area: Rect, operation: &Operation) {
             Line::from(vec![
                 level_chip(&entry.level),
                 Span::raw(" "),
-                Span::raw(entry.message.clone()),
+                Span::raw(crate::data::strip_controls(&entry.message)),
             ])
         })
         .collect();

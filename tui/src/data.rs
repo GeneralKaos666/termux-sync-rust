@@ -235,8 +235,14 @@ pub fn is_safe_backup_name(name: &str) -> bool {
         && !name.contains('\\')
 }
 
+pub fn strip_controls(text: &str) -> String {
+    text.chars()
+        .filter(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
+        .collect()
+}
+
 pub fn parse_manifest(value: &Value) -> Option<Backup> {
-    let name = value.get("name")?.as_str()?.to_string();
+    let name = strip_controls(value.get("name")?.as_str()?);
     if !is_safe_backup_name(&name) {
         return None;
     }
@@ -244,12 +250,9 @@ pub fn parse_manifest(value: &Value) -> Option<Backup> {
         .get("label")
         .and_then(Value::as_str)
         .filter(|label| !label.is_empty() && *label != name)
-        .unwrap_or_default()
-        .to_string();
-    let date = value
-        .get("date")
-        .and_then(Value::as_str)
-        .unwrap_or("—")
+        .map(strip_controls)
+        .unwrap_or_default();
+    let date = strip_controls(value.get("date").and_then(Value::as_str).unwrap_or("—"))
         .chars()
         .take(16)
         .collect::<String>()
@@ -274,8 +277,8 @@ pub fn parse_manifest(value: &Value) -> Option<Backup> {
         label,
         packages,
         size,
-        version: string_field(value, "version", "—"),
-        compression: string_field(value, "compression", "—").to_uppercase(),
+        version: strip_controls(&string_field(value, "version", "—")),
+        compression: strip_controls(&string_field(value, "compression", "—")).to_uppercase(),
         modified: None,
     })
 }
@@ -382,10 +385,15 @@ pub fn run_captured(args: &[String]) -> Result<String, String> {
 }
 
 pub fn cli_command(args: &[String]) -> Command {
-    let bin = env::var("TERMUX_SYNC_BIN").unwrap_or_else(|_| "termux-sync".to_string());
-    let mut command = Command::new(bin);
+    let mut command = Command::new(cli_bin());
     command.args(args);
     command
+}
+
+pub fn cli_bin() -> PathBuf {
+    env::var_os("TERMUX_SYNC_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("termux-sync"))
 }
 
 pub fn expand_home(path: &str) -> String {
@@ -450,11 +458,13 @@ pub fn probe_tools(storage: &str, paths: &[PathBuf]) -> Vec<ToolStatus> {
         .collect()
 }
 
+pub fn cli_version_with(bin: &Path) -> Option<String> {
+    let output = Command::new(bin).arg("--version").output().ok()?;
+    parse_cli_version(output.status.success(), &output.stdout)
+}
+
 pub fn cli_version() -> Option<String> {
-    Some(format!(
-        "termux-sync v{}",
-        termux_sync_core::core::paths::VERSION
-    ))
+    cli_version_with(&cli_bin())
 }
 
 pub fn parse_cli_version(success: bool, stdout: &[u8]) -> Option<String> {
@@ -809,5 +819,35 @@ mod task11_tests {
         assert!(tools.iter().all(|tool| tool.name != "tar"));
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "dpkg");
+    }
+}
+
+#[cfg(test)]
+mod task15_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn strips_escape_sequences_from_labels_and_logs() {
+        assert_eq!(strip_controls("ok\u{1b}[31mred\u{1b}[0m"), "ok[31mred[0m");
+        assert_eq!(strip_controls("a\u{0007}b"), "ab");
+        let backup = parse_manifest(&serde_json::json!({
+            "name": "termux_backup_x",
+            "label": "x\u{1b}]0;pwned\u{0007}"
+        }))
+        .unwrap();
+        assert!(!backup.label.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn cli_version_queries_the_binary() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("fake");
+        fs::write(&bin, "#!/bin/sh\nprintf 'termux-sync v9.9.9\\n'\n").unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            cli_version_with(&bin),
+            Some("termux-sync v9.9.9".to_string())
+        );
     }
 }

@@ -215,8 +215,8 @@ pub fn parse_event(line: &str) -> Result<Event, String> {
         value
             .get(key)
             .and_then(Value::as_str)
+            .map(data::strip_controls)
             .unwrap_or_default()
-            .to_string()
     };
     let number = |key: &str| value.get(key).and_then(Value::as_u64);
 
@@ -275,18 +275,20 @@ pub fn parse_event(line: &str) -> Result<Event, String> {
             date: text("date"),
             label: text("label"),
             storage: text("storage"),
-            backup_version: value
-                .get("versions")
-                .and_then(|versions| versions.get("backup"))
-                .and_then(Value::as_str)
-                .unwrap_or("—")
-                .to_string(),
-            current_version: value
-                .get("versions")
-                .and_then(|versions| versions.get("current"))
-                .and_then(Value::as_str)
-                .unwrap_or("—")
-                .to_string(),
+            backup_version: data::strip_controls(
+                value
+                    .get("versions")
+                    .and_then(|versions| versions.get("backup"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("—"),
+            ),
+            current_version: data::strip_controls(
+                value
+                    .get("versions")
+                    .and_then(|versions| versions.get("current"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("—"),
+            ),
             packages: number("packages").unwrap_or(0) as usize,
             to_install: number("to_install").map(|n| n as usize),
             already_installed: number("already_installed").map(|n| n as usize),
