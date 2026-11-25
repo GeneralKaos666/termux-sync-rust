@@ -2156,6 +2156,7 @@ dependencies = [
  "clap",
  "serde_json",
  "sha2",
+ "tar",
  "tempfile",
  "termux-sync-core",
  "termux-sync-tui",

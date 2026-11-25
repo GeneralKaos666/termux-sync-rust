@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Cursor;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -6,6 +7,7 @@ use std::process::{Command, Output, Stdio};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use tar::{Builder, EntryType, Header};
 
 struct Fixture {
     temp: tempfile::TempDir,
@@ -170,6 +172,65 @@ impl Fixture {
         )
         .unwrap();
     }
+
+    fn write_partial_backup(&self, name: &str) {
+        let dir = self.home.join("backups").join(name);
+        fs::create_dir_all(&dir).unwrap();
+        let archive_path = dir.join("home.tar.gz");
+        let file = fs::File::create(&archive_path).unwrap();
+        let mut builder = Builder::new(file);
+        // A valid directory and file, followed by a traversal member that is
+        // refused during extraction (a warning) while the rest still extracts.
+        builder
+            .append(
+                &raw_header("home/", 0, EntryType::Directory),
+                Cursor::new(Vec::<u8>::new()),
+            )
+            .unwrap();
+        builder
+            .append(
+                &raw_header("home/ok.txt", 3, EntryType::Regular),
+                Cursor::new(b"ok\n".to_vec()),
+            )
+            .unwrap();
+        builder
+            .append(
+                &raw_header("../evil.txt", 1, EntryType::Regular),
+                Cursor::new(b"x".to_vec()),
+            )
+            .unwrap();
+        builder.into_inner().unwrap();
+        let bytes = fs::read(&archive_path).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        let checksum = format!("{:x}", hasher.finalize());
+        let manifest = serde_json::json!({
+            "name": name,
+            "files": {
+                "home": {
+                    "archive": "home.tar.gz",
+                    "size": bytes.len(),
+                    "checksum": checksum,
+                }
+            },
+            "packages": [],
+        });
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+fn raw_header(name: &str, size: u64, kind: EntryType) -> Header {
+    let mut header = Header::new_gnu();
+    header.set_size(size);
+    header.set_mode(if kind.is_symlink() { 0o777 } else { 0o644 });
+    header.set_entry_type(kind);
+    header.as_mut_bytes()[..name.len()].copy_from_slice(name.as_bytes());
+    header.set_cksum();
+    header
 }
 
 #[test]
@@ -352,6 +413,23 @@ fn restore_fails_when_extraction_fails() {
     fx.write_corrupt_backup("termux_backup_bad");
     let out = fx.run(
         &["--json-events", "restore", "--name", "termux_backup_bad"],
+        Some("{\"confirm\":\"RESTORE\"}\n"),
+    );
+    assert!(!out.status.success(), "restore reported success");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\"ok\":false"));
+}
+
+#[test]
+fn restore_fails_on_partial_extraction() {
+    let fx = Fixture::new();
+    fx.write_partial_backup("termux_backup_partial");
+    let out = fx.run(
+        &[
+            "--json-events",
+            "restore",
+            "--name",
+            "termux_backup_partial",
+        ],
         Some("{\"confirm\":\"RESTORE\"}\n"),
     );
     assert!(!out.status.success(), "restore reported success");

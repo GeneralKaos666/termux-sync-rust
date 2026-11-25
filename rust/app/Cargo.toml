@@ -20,6 +20,7 @@ termux-sync-tui = { path = "../../tui" }
 trycmd = "1"
 tempfile = "3"
 sha2 = "0.10"
+tar = { version = "0.4", default-features = false }
 
 [profile.release]
 lto = true

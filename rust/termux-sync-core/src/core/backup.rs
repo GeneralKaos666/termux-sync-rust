@@ -1185,6 +1185,7 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
             &mut on_member,
         ) {
             Ok(result) => {
+                let failed = result.extracted == 0 || !result.warnings.is_empty();
                 for warning in result.warnings {
                     events::emit(
                         "log",
@@ -1194,7 +1195,7 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
                         ],
                     );
                 }
-                if result.extracted == 0 {
+                if failed {
                     failed_archives.push(archive_name.clone());
                     events::emit(
                         "log",
@@ -1263,7 +1264,8 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
             vec![
                 ("ok", Value::Bool(false)),
                 ("name", Value::String(name.clone())),
-                ("warnings", Value::from(failed_archives.clone())),
+                ("archives_failed", Value::from(failed_archives.clone())),
+                ("warnings", Value::Bool(true)),
             ],
         );
         cleanup(&tmp_dir);
