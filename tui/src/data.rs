@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -356,12 +357,30 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
 }
 
 pub fn tail_log(lines: usize) -> Vec<String> {
-    let Ok(text) = fs::read_to_string(log_path()) else {
+    tail_log_bounded(&log_path(), lines, 256 * 1024)
+}
+
+fn tail_log_bounded(path: &Path, lines: usize, max_bytes: usize) -> Vec<String> {
+    let Ok(mut file) = fs::File::open(path) else {
         return Vec::new();
     };
+    let len = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    let start = len.saturating_sub(max_bytes as u64);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return Vec::new();
+    }
+    let mut text = String::new();
+    if file.read_to_string(&mut text).is_err() {
+        return Vec::new();
+    }
+    if start > 0
+        && let Some(newline) = text.find('\n')
+    {
+        text.drain(..=newline);
+    }
     let all: Vec<&str> = text.lines().collect();
-    let start = all.len().saturating_sub(lines);
-    all[start..]
+    let first = all.len().saturating_sub(lines);
+    all[first..]
         .iter()
         .map(|line| (*line).to_string())
         .collect()
@@ -837,6 +856,20 @@ mod task15_tests {
         }))
         .unwrap();
         assert!(!backup.label.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn tail_reads_only_the_end_of_a_large_log() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("sync.log");
+        let mut text = String::new();
+        for i in 0..50_000 {
+            text.push_str(&format!("line {i}\n"));
+        }
+        fs::write(&path, text).unwrap();
+        let tail = tail_log_bounded(&path, 2, 4096);
+        assert_eq!(tail.len(), 2);
+        assert!(tail[1].starts_with("line 49999"));
     }
 
     #[test]

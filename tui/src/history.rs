@@ -39,7 +39,15 @@ impl HistoryStore {
         let temp = path.with_extension("json.tmp");
         let text = serde_json::to_string_pretty(&entries)
             .map_err(|error| io::Error::other(error.to_string()))?;
-        fs::write(&temp, text)?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut handle = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&temp)?;
+        handle.write_all(text.as_bytes())?;
         fs::rename(temp, path)
     }
 }
@@ -47,6 +55,18 @@ impl HistoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("history.json");
+        HistoryStore::save(&path, &[]).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
 
     fn sample_entry(n: usize) -> HistoryEntry {
         HistoryEntry {

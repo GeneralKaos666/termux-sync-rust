@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::data::{self, Backup};
 
 const MAX_LINE: usize = 64 * 1024;
-const LOG_LIMIT: usize = 200;
+pub(crate) const LOG_LIMIT: usize = 200;
 const STDERR_LIMIT: usize = 20;
 const CANCEL_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -382,14 +382,24 @@ enum Msg {
 }
 
 pub fn collect_backups() -> Result<Vec<Backup>, String> {
-    let text = std::fs::read_to_string(data::config_path()).unwrap_or_else(|_| "{}".to_string());
-    let cfg: Value = serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({}));
-    let storage = termux_sync_core::core::storage::Storage::from_config(&cfg)?;
-    Ok(storage
-        .list_backups()
-        .into_iter()
-        .filter_map(|value| data::parse_manifest(&value))
-        .collect())
+    collect_backups_with(&data::cli_bin())
+}
+
+pub fn collect_backups_with(bin: &std::path::Path) -> Result<Vec<Backup>, String> {
+    let output = std::process::Command::new(bin)
+        .args(["list", "--json-events"])
+        .output()
+        .map_err(|error| format!("cannot start termux-sync: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("termux-sync list exited with {}", output.status));
+    }
+    let mut backups = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Ok(Event::Backup(backup)) = parse_event(line) {
+            backups.push(backup);
+        }
+    }
+    Ok(backups)
 }
 
 pub fn supports_flag(flag: &str) -> bool {
@@ -1280,6 +1290,21 @@ mod fixture_tests {
         op.kill_forcefully();
         let _ = op.poll();
         unsafe { std::env::remove_var("TERMUX_SYNC_BIN") };
+    }
+
+    #[test]
+    fn backup_list_uses_the_configured_cli() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("fake");
+        fs::write(
+            &bin,
+            "#!/bin/sh\nprintf '%s\\n' '{\"event\":\"backup\",\"name\":\"termux_backup_a\",\"date\":\"2026-01-01\",\"size\":1}'\n",
+        )
+        .unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let list = collect_backups_with(&bin).unwrap();
+        assert_eq!(list[0].name, "termux_backup_a");
     }
 
     #[test]

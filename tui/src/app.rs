@@ -1610,7 +1610,11 @@ impl App {
                 self.output_source = OutputSource::Command;
                 self.output.clear();
                 self.output.push(format!("$ termux-sync {title}"));
-                self.output.extend(text.lines().map(str::to_string));
+                let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+                if lines.len() > crate::ops::LOG_LIMIT {
+                    lines = lines.split_off(lines.len() - crate::ops::LOG_LIMIT);
+                }
+                self.output.extend(lines);
                 self.output_offset = 0;
                 self.switch_focus(Focus::Output);
                 self.status = format!("termux-sync {title} finished");
