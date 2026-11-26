@@ -155,7 +155,7 @@ fn unlock_tree(root: &Path, excludes: &[String]) -> UnlockGuard {
             if wanted != mode
                 && fs::set_permissions(&path, fs::Permissions::from_mode(wanted)).is_ok()
             {
-                changed.push((path.clone(), mode));
+                changed.push((path, mode));
             }
         }
     }

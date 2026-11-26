@@ -592,7 +592,6 @@ impl Operation {
         }
 
         if let Some(stderr) = stderr {
-            let tx = tx.clone();
             std::thread::spawn(move || {
                 let reader = BufReader::new(stderr);
                 for line in reader.lines().map_while(Result::ok) {
