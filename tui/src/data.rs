@@ -400,12 +400,9 @@ fn tail_log_bounded(path: &Path, lines: usize, max_bytes: usize) -> Vec<String> 
     {
         text.drain(..=newline);
     }
-    let all: Vec<&str> = text.lines().collect();
-    let first = all.len().saturating_sub(lines);
-    all[first..]
-        .iter()
-        .map(|line| (*line).to_string())
-        .collect()
+    let mut out: Vec<String> = text.lines().rev().take(lines).map(str::to_string).collect();
+    out.reverse();
+    out
 }
 
 pub fn run_captured(args: &[String]) -> Result<String, String> {
@@ -583,11 +580,12 @@ pub fn daemon_activity(lines: &[String]) -> Vec<String> {
     ];
     let mut activity: Vec<String> = lines
         .iter()
+        .rev()
         .filter(|line| markers.iter().any(|marker| line.contains(marker)))
+        .take(5)
         .cloned()
         .collect();
-    let keep = activity.len().saturating_sub(5);
-    activity.drain(..keep);
+    activity.reverse();
     activity
 }
 
