@@ -1,3 +1,9 @@
+//! Interactive terminal dashboard for `termux-sync`.
+//!
+//! [`run`] drives the event loop; [`app::App`] holds the state and key
+//! handling, [`ops`] owns the child process and event protocol, [`data`] reads
+//! local state, and [`ui`] renders frames.
+
 pub mod app;
 pub mod data;
 pub mod history;
