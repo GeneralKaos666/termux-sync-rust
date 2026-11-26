@@ -5,6 +5,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::data::{self, Backup};
@@ -229,179 +230,358 @@ pub fn parse_event(line: &str) -> Result<Event, String> {
     })
 }
 
-fn json_text(value: &Value, key: &str) -> String {
+/// Wire payloads. Every field is optional and tolerant: a missing or wrongly
+/// typed value becomes `None`, which is what the `Value::as_*` lookups these
+/// structs replace did.
+#[derive(Debug, Default, Deserialize)]
+struct StartPayload {
+    #[serde(default, deserialize_with = "flex")]
+    name: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    storage: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct BackupPayload {
+    #[serde(default, deserialize_with = "flex")]
+    name: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    date: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    label: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    packages: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    size: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    version: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    compression: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StagePayload {
+    #[serde(default, deserialize_with = "flex")]
+    id: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    label: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    state: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    index: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    total: Option<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ProgressPayload {
+    #[serde(default, deserialize_with = "flex")]
+    stage: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    current: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    total: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    unit: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    detail: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct LogPayload {
+    #[serde(default, deserialize_with = "flex")]
+    level: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    message: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct VerifyPayload {
+    #[serde(default, deserialize_with = "flex")]
+    state: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    details: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PlanVersionsPayload {
+    #[serde(default, deserialize_with = "flex")]
+    backup: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    current: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PlanPayload {
+    #[serde(default, deserialize_with = "flex")]
+    name: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    date: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    label: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    storage: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    versions: Option<PlanVersionsPayload>,
+    #[serde(default, deserialize_with = "flex")]
+    packages: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    to_install: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    already_installed: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    device_only: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    diff_available: Option<bool>,
+    #[serde(default, deserialize_with = "flex_list")]
+    archives: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "flex")]
+    size: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    checksums: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PackageDiffPayload {
+    #[serde(default, deserialize_with = "flex")]
+    category: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    part: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    parts: Option<u64>,
+    #[serde(default, deserialize_with = "flex_list")]
+    packages: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ResultPayload {
+    #[serde(default, deserialize_with = "flex")]
+    ok: Option<bool>,
+    #[serde(default, deserialize_with = "flex")]
+    name: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    size: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    verified: Option<bool>,
+    #[serde(default, deserialize_with = "flex")]
+    verify_details: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    packages: Option<u64>,
+    #[serde(default, deserialize_with = "flex")]
+    packages_installed: Option<u64>,
+    #[serde(default, deserialize_with = "flex_list")]
+    packages_failed: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "flex")]
+    archives: Option<u64>,
+    #[serde(default, deserialize_with = "flex_list")]
+    archives_failed: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "flex")]
+    warnings: Option<bool>,
+    #[serde(default, deserialize_with = "flex")]
+    restart_required: Option<bool>,
+    #[serde(default, deserialize_with = "flex")]
+    duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ErrorPayload {
+    #[serde(default, deserialize_with = "flex")]
+    message: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    hint: Option<String>,
+    #[serde(default, deserialize_with = "flex")]
+    exit_code: Option<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct CancelledPayload {
+    #[serde(default, deserialize_with = "flex")]
+    reason: Option<String>,
+}
+
+/// Tolerant `Option<T>` field deserializer: a missing or wrongly typed value
+/// becomes `None`. Swallowing the error keeps `serde_json`'s map access in a
+/// usable state, because each entry is deserialized from its own value.
+fn flex<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer).ok().flatten())
+}
+
+/// Arrays of strings with non-string entries dropped, matching the old
+/// `filter_map(Value::as_str)` walk.
+fn flex_list<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match Option::<Vec<Value>>::deserialize(deserializer) {
+        Ok(Some(items)) => Ok(Some(
+            items
+                .into_iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect(),
+        )),
+        _ => Ok(None),
+    }
+}
+
+/// Decode one payload, falling back to defaults when a field type is hostile.
+fn payload<T>(value: &Value) -> T
+where
+    T: Default + serde::de::DeserializeOwned,
+{
+    T::deserialize(value).unwrap_or_default()
+}
+
+/// Text from a wire field, with control characters stripped.
+fn text(value: Option<String>) -> String {
     value
-        .get(key)
-        .and_then(Value::as_str)
-        .map(data::strip_controls)
+        .map(|value| data::strip_controls(&value).into_owned())
         .unwrap_or_default()
-        .into_owned()
-}
-
-fn json_number(value: &Value, key: &str) -> Option<u64> {
-    value.get(key).and_then(Value::as_u64)
-}
-
-fn json_bool(value: &Value, key: &str) -> Option<bool> {
-    value.get(key).and_then(Value::as_bool)
 }
 
 fn parse_start(value: &Value) -> Event {
+    let payload: StartPayload = payload(value);
     Event::Start {
-        name: json_text(value, "name"),
-        storage: json_text(value, "storage"),
+        name: text(payload.name),
+        storage: text(payload.storage),
     }
 }
 
 fn parse_backup(value: &Value) -> Event {
-    let name = json_text(value, "name");
+    let payload: BackupPayload = payload(value);
+    let name = text(payload.name);
     if !data::is_safe_backup_name(&name) {
         return Event::Unknown;
     }
     Event::Backup(Backup {
         name,
-        date: json_text(value, "date")
+        date: text(payload.date)
             .replace('T', " ")
             .chars()
             .take(16)
             .collect(),
-        label: json_text(value, "label"),
-        packages: json_number(value, "packages").unwrap_or(0) as usize,
-        size: json_number(value, "size").unwrap_or(0),
-        version: json_text(value, "version"),
-        compression: json_text(value, "compression").to_uppercase(),
+        label: text(payload.label),
+        packages: payload.packages.unwrap_or(0) as usize,
+        size: payload.size.unwrap_or(0),
+        version: text(payload.version),
+        compression: text(payload.compression).to_uppercase(),
         modified: None,
     })
 }
 
 fn parse_stage(value: &Value) -> Event {
+    let payload: StagePayload = payload(value);
     Event::Stage {
-        id: json_text(value, "id"),
-        label: json_text(value, "label"),
-        state: match value.get("state").and_then(Value::as_str).unwrap_or("") {
+        id: text(payload.id),
+        label: text(payload.label),
+        state: match payload.state.as_deref().unwrap_or("") {
             "start" => StageState::Active,
             "complete" => StageState::Complete,
             "failed" => StageState::Failed,
             "skipped" => StageState::Skipped,
             _ => StageState::Pending,
         },
-        index: json_number(value, "index").unwrap_or(0) as usize,
-        total: json_number(value, "total").unwrap_or(0) as usize,
+        index: payload.index.unwrap_or(0) as usize,
+        total: payload.total.unwrap_or(0) as usize,
     }
 }
 
 fn parse_progress(value: &Value) -> Event {
+    let payload: ProgressPayload = payload(value);
     Event::Progress {
-        stage: json_text(value, "stage"),
-        current: json_number(value, "current").unwrap_or(0),
-        total: json_number(value, "total"),
-        unit: value
-            .get("unit")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        detail: value
-            .get("detail")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        stage: text(payload.stage),
+        current: payload.current.unwrap_or(0),
+        total: payload.total,
+        unit: payload.unit,
+        detail: payload.detail,
     }
 }
 
 fn parse_log(value: &Value) -> Event {
+    let payload: LogPayload = payload(value);
     Event::Log {
-        level: json_text(value, "level"),
-        message: json_text(value, "message"),
+        level: text(payload.level),
+        message: text(payload.message),
     }
 }
 
 fn parse_verify(value: &Value) -> Event {
+    let payload: VerifyPayload = payload(value);
     Event::Verify {
-        state: json_text(value, "state"),
-        details: json_text(value, "details"),
+        state: text(payload.state),
+        details: text(payload.details),
     }
 }
 
 fn parse_plan(value: &Value) -> Event {
-    let version_text = |key: &str| {
-        data::strip_controls(
-            value
-                .get("versions")
-                .and_then(|versions| versions.get(key))
-                .and_then(Value::as_str)
-                .unwrap_or("—"),
-        )
-        .into_owned()
-    };
+    let payload: PlanPayload = payload(value);
+    let versions = payload.versions.unwrap_or_default();
+    let version_text =
+        |value: Option<String>| data::strip_controls(value.as_deref().unwrap_or("—")).into_owned();
     Event::Plan(Plan {
-        name: json_text(value, "name"),
-        date: json_text(value, "date"),
-        label: json_text(value, "label"),
-        storage: json_text(value, "storage"),
-        backup_version: version_text("backup"),
-        current_version: version_text("current"),
-        packages: json_number(value, "packages").unwrap_or(0) as usize,
-        to_install: json_number(value, "to_install").map(|n| n as usize),
-        already_installed: json_number(value, "already_installed").map(|n| n as usize),
-        device_only: json_number(value, "device_only").map(|n| n as usize),
-        diff_available: json_bool(value, "diff_available").unwrap_or(false),
-        archives: string_list(value, "archives"),
-        size: json_number(value, "size").unwrap_or(0),
-        checksums: json_text(value, "checksums"),
+        name: text(payload.name),
+        date: text(payload.date),
+        label: text(payload.label),
+        storage: text(payload.storage),
+        backup_version: version_text(versions.backup),
+        current_version: version_text(versions.current),
+        packages: payload.packages.unwrap_or(0) as usize,
+        to_install: payload.to_install.map(|n| n as usize),
+        already_installed: payload.already_installed.map(|n| n as usize),
+        device_only: payload.device_only.map(|n| n as usize),
+        diff_available: payload.diff_available.unwrap_or(false),
+        archives: payload.archives.unwrap_or_default(),
+        size: payload.size.unwrap_or(0),
+        checksums: text(payload.checksums),
     })
 }
 
 fn parse_package_diff(value: &Value) -> Event {
+    let payload: PackageDiffPayload = payload(value);
     Event::PackageDiff {
-        category: json_text(value, "category"),
-        part: json_number(value, "part").unwrap_or(1) as usize,
-        parts: json_number(value, "parts").unwrap_or(1) as usize,
-        packages: string_list(value, "packages"),
+        category: text(payload.category),
+        part: payload.part.unwrap_or(1) as usize,
+        parts: payload.parts.unwrap_or(1) as usize,
+        packages: payload.packages.unwrap_or_default(),
     }
 }
 
 fn parse_result(value: &Value) -> Event {
+    let payload: ResultPayload = payload(value);
     Event::Result(Outcome {
-        ok: json_bool(value, "ok").unwrap_or(false),
-        name: json_text(value, "name"),
-        size: json_number(value, "size").unwrap_or(0),
-        verified: json_bool(value, "verified"),
-        verify_details: json_text(value, "verify_details"),
-        packages: json_number(value, "packages").unwrap_or(0) as usize,
-        packages_installed: json_number(value, "packages_installed").unwrap_or(0) as usize,
-        packages_failed: string_list(value, "packages_failed"),
-        archives: json_number(value, "archives").unwrap_or(0) as usize,
-        archives_failed: string_list(value, "archives_failed"),
-        warnings: json_bool(value, "warnings").unwrap_or(false),
-        restart_required: json_bool(value, "restart_required").unwrap_or(false),
-        duration_ms: json_number(value, "duration_ms").unwrap_or(0),
+        ok: payload.ok.unwrap_or(false),
+        name: text(payload.name),
+        size: payload.size.unwrap_or(0),
+        verified: payload.verified,
+        verify_details: text(payload.verify_details),
+        packages: payload.packages.unwrap_or(0) as usize,
+        packages_installed: payload.packages_installed.unwrap_or(0) as usize,
+        packages_failed: payload.packages_failed.unwrap_or_default(),
+        archives: payload.archives.unwrap_or(0) as usize,
+        archives_failed: payload.archives_failed.unwrap_or_default(),
+        warnings: payload.warnings.unwrap_or(false),
+        restart_required: payload.restart_required.unwrap_or(false),
+        duration_ms: payload.duration_ms.unwrap_or(0),
     })
 }
 
 fn parse_error(value: &Value) -> Event {
+    let payload: ErrorPayload = payload(value);
     Event::Error(OpError {
-        message: json_text(value, "message"),
-        hint: json_text(value, "hint"),
-        exit_code: json_number(value, "exit_code").map(|n| n as i32),
+        message: text(payload.message),
+        hint: text(payload.hint),
+        exit_code: payload.exit_code.map(|n| n as i32),
     })
 }
 
 fn parse_cancelled(value: &Value) -> Event {
+    let payload: CancelledPayload = payload(value);
     Event::Cancelled {
-        reason: json_text(value, "reason"),
+        reason: text(payload.reason),
     }
-}
-
-fn string_list(value: &Value, key: &str) -> Vec<String> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 enum Msg {
@@ -1154,6 +1334,35 @@ fn human_count(value: u64) -> String {
     }
 }
 
+/// Serializes the tests that mutate process environment variables.
+#[cfg(test)]
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// Sets an environment variable for one test and removes it again on drop.
+#[cfg(test)]
+struct ScopedEnv {
+    key: &'static str,
+}
+
+#[cfg(test)]
+impl ScopedEnv {
+    fn set(key: &'static str, value: &std::path::Path) -> Self {
+        // SAFETY: the caller holds `ENV_LOCK`, and no other test in this
+        // binary reads or writes this variable.
+        unsafe { std::env::set_var(key, value) };
+        Self { key }
+    }
+}
+
+#[cfg(test)]
+impl Drop for ScopedEnv {
+    fn drop(&mut self) {
+        // SAFETY: the caller held `ENV_LOCK` while the variable was set, and
+        // the guard drops before the lock.
+        unsafe { std::env::remove_var(self.key) };
+    }
+}
+
 #[cfg(test)]
 pub fn test_operation(kind: Kind) -> Operation {
     let stages = stage_defs(kind)
@@ -1368,15 +1577,14 @@ mod fixture_tests {
         let bin = temp.path().join("fake");
         fs::write(&bin, "#!/bin/sh\nread line\nsleep 5\n").unwrap();
         fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
-        // Edition 2024 makes set_var unsafe; tests run single-threaded per binary.
-        unsafe { std::env::set_var("TERMUX_SYNC_BIN", &bin) };
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let _env = ScopedEnv::set("TERMUX_SYNC_BIN", &bin);
         let mut op = Operation::start(Kind::Backup, "x", vec!["backup".into()], false).unwrap();
         op.status = Status::AwaitingConfirm;
         assert!(op.request_cancel());
         assert!(op.cancel_sent_at.is_some());
         op.kill_forcefully();
         let _ = op.poll();
-        unsafe { std::env::remove_var("TERMUX_SYNC_BIN") };
     }
 
     #[test]
