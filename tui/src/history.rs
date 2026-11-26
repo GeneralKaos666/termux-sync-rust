@@ -5,20 +5,30 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+/// One completed backup or restore kept for the history overlay.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HistoryEntry {
+    /// Operation kind, `backup` or `restore`.
     pub kind: String,
+    /// Backup name the operation targeted.
     pub name: String,
+    /// Terminal status string, for example `succeeded` or `failed`.
     pub status: String,
+    /// Bytes transferred, zero when unknown.
     pub size: u64,
+    /// Wall-clock duration in milliseconds.
     pub duration_ms: u64,
+    /// Verification result, `None` when verification did not run.
     pub verified: Option<bool>,
+    /// Unix timestamp when the operation finished.
     pub at: u64,
 }
 
+/// Loads and saves [`HistoryEntry`] lists in a private JSON file.
 pub struct HistoryStore;
 
 impl HistoryStore {
+    /// Reads at most the 20 newest entries; a missing file is an empty list.
     pub fn load(path: &Path) -> io::Result<Vec<HistoryEntry>> {
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
@@ -32,6 +42,9 @@ impl HistoryStore {
         Ok(entries)
     }
 
+    /// Writes at most the 20 newest entries atomically with mode `0600`.
+    ///
+    /// Entries are sorted in place, newest first.
     pub fn save(path: &Path, entries: &mut [HistoryEntry]) -> io::Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;

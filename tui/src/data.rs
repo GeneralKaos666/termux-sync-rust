@@ -8,58 +8,100 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
+/// Display-oriented view of `config.json`.
+///
+/// Secrets such as tokens and encryption passwords are deliberately absent; the TUI never needs them.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Backend name: `local`, `gdrive`, or `github`.
     pub storage: String,
+    /// Backup directory for local storage; a leading `~` is expanded when used.
     pub local_path: String,
+    /// Archive compression codec reported by the CLI, for example `gz`.
     pub compression: String,
+    /// Rotation limit the CLI keeps.
     pub max_backups: u64,
+    /// Human-readable auto-backup schedule, or `"off"`.
     pub schedule: String,
+    /// Google Drive folder id; empty means the drive root.
     pub gdrive_folder_id: String,
+    /// GitHub repository in `owner/name` form.
     pub github_repo: String,
+    /// Branch within `github_repo`.
     pub github_branch: String,
 }
 
+/// Result of probing for one external tool the CLI needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolStatus {
+    /// Executable name as looked up on `PATH`.
     pub name: &'static str,
+    /// Resolved path when the executable exists.
     pub path: Option<PathBuf>,
+    /// Whether the selected storage backend cannot work without this tool.
     pub required: bool,
 }
 
+/// Everything the status overlay displays, collected in one pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusReport {
+    /// Uppercase backend name.
     pub storage: String,
+    /// Backend-specific destination summary.
     pub target: String,
+    /// Uppercase compression codec.
     pub compression: String,
+    /// Rotation limit.
     pub max_backups: u64,
+    /// Auto-backup schedule text.
     pub schedule: String,
+    /// First version line from `termux-sync --version`, when it runs.
     pub cli_version: Option<String>,
+    /// Config path shortened with `~` or `$PREFIX`.
     pub config_path: String,
+    /// Log path shortened with `~` or `$PREFIX`.
     pub log_path: String,
+    /// History path shortened with `~` or `$PREFIX`.
     pub history_path: String,
+    /// Tools probed for the current backend.
     pub tools: Vec<ToolStatus>,
 }
 
+/// One backup directory summarized from its manifest.
 #[derive(Debug, Clone)]
 pub struct Backup {
+    /// Directory name, taken from the manifest and always safe as a single path component.
     pub name: String,
+    /// Manifest date normalized for tables.
     pub date: String,
+    /// User label, empty when absent or equal to the name.
     pub label: String,
+    /// Number of packages listed in the manifest.
     pub packages: usize,
+    /// Total byte size of the manifest's files.
     pub size: u64,
+    /// CLI version recorded for the backup.
     pub version: String,
+    /// Uppercase compression codec.
     pub compression: String,
+    /// Manifest modification time, used for the age column when available.
     pub modified: Option<SystemTime>,
 }
 
+/// Borrowed pieces of a `[timestamp] [LEVEL] message` log line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LogParts<'a> {
+    /// Timestamp between the first pair of brackets.
     pub timestamp: &'a str,
+    /// Level between the second pair of brackets.
     pub level: &'a str,
+    /// Message after the level, without leading whitespace.
     pub message: &'a str,
 }
 
+/// Splits a bracketed log line into timestamp, level, and message.
+///
+/// Returns `None` unless both bracketed fields are present.
 pub fn parse_log_line(line: &str) -> Option<LogParts<'_>> {
     let rest = line.strip_prefix('[')?;
     let (timestamp, rest) = rest.split_once(']')?;
@@ -72,11 +114,16 @@ pub fn parse_log_line(line: &str) -> Option<LogParts<'_>> {
     })
 }
 
+/// Everything the dashboard reads in one refresh.
 #[derive(Debug, Clone, Default)]
 pub struct Snapshot {
+    /// Parsed display config.
     pub config: Config,
+    /// Backups found for the current storage.
     pub backups: Vec<Backup>,
+    /// Tail of `sync.log`.
     pub log: Vec<String>,
+    /// Problems from the last load, joined for the header.
     pub warning: Vec<String>,
 }
 
@@ -87,30 +134,39 @@ impl Snapshot {
     }
 }
 
+/// Returns `$HOME`, or an empty path when it is unset.
 pub fn home() -> PathBuf {
     env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
 }
 
+/// Config directory, `~/.config/termux-sync`.
 pub fn config_dir() -> PathBuf {
     home().join(".config").join("termux-sync")
 }
 
+/// `config.json` inside [`config_dir`].
 pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
+/// `cron.json` inside [`config_dir`].
 pub fn schedule_path() -> PathBuf {
     config_dir().join("cron.json")
 }
 
+/// `sync.log` inside [`config_dir`].
 pub fn log_path() -> PathBuf {
     config_dir().join("sync.log")
 }
 
+/// `tui-history.json` inside [`config_dir`].
 pub fn history_path() -> PathBuf {
     config_dir().join("tui-history.json")
 }
 
+/// Reads config, backups, and log from disk.
+///
+/// Never fails: read and parse errors become [`Snapshot::warning`] entries and defaults are used.
 pub fn load_snapshot() -> Snapshot {
     let mut warning = Vec::new();
 
@@ -155,6 +211,9 @@ pub fn load_snapshot() -> Snapshot {
     }
 }
 
+/// Builds a display [`Config`] from raw `config.json` and `cron.json` values.
+///
+/// Missing or malformed fields fall back to defaults; secret fields are ignored.
 pub fn parse_config(cfg: &Value, schedule: &Value) -> Config {
     let storage = string_field(cfg, "storage", "local").to_lowercase();
     let local_path = string_field(cfg, "local_path", "~/termux-backups");
@@ -199,6 +258,9 @@ impl Default for Config {
     }
 }
 
+/// Lists valid backup directories under `root`, newest first.
+///
+/// Unreadable entries and invalid manifests are skipped, and a missing root yields an empty list.
 pub fn load_local_backups(root: &Path) -> Result<Vec<Backup>, String> {
     let entries = match fs::read_dir(root) {
         Ok(entries) => entries,
@@ -235,6 +297,7 @@ pub fn load_local_backups(root: &Path) -> Result<Vec<Backup>, String> {
     Ok(backups)
 }
 
+/// Rejects names that could escape the backup directory or confuse path handling.
 pub fn is_safe_backup_name(name: &str) -> bool {
     !name.is_empty()
         && name.trim() == name
@@ -253,6 +316,7 @@ pub fn normalize_date(text: &str) -> String {
         .replace('T', " ")
 }
 
+/// Removes control characters except newline and tab, borrowing when the text is already clean.
 pub fn strip_controls(text: &str) -> Cow<'_, str> {
     if !text
         .chars()
@@ -267,6 +331,9 @@ pub fn strip_controls(text: &str) -> Cow<'_, str> {
     )
 }
 
+/// Reads a backup summary from a manifest value.
+///
+/// Returns `None` when the name is missing or unsafe; other fields degrade to placeholders.
 pub fn parse_manifest(value: &Value) -> Option<Backup> {
     let name = strip_controls(value.get("name")?.as_str()?);
     if !is_safe_backup_name(&name) {
@@ -306,6 +373,7 @@ pub fn parse_manifest(value: &Value) -> Option<Backup> {
     })
 }
 
+/// Compact age for a backup, preferring the manifest mtime over the recorded date.
 pub fn backup_age(backup: &Backup) -> String {
     let now = SystemTime::now();
     if let Some(modified) = backup.modified {
@@ -318,6 +386,7 @@ pub fn backup_age(backup: &Backup) -> String {
     backup_age_at(&backup.date, now)
 }
 
+/// Formats the age of `date` relative to `now`, or `—` when the date cannot be parsed.
 pub fn backup_age_at(date: &str, now: SystemTime) -> String {
     let Some(then) = parse_date_secs(date) else {
         return "—".to_string();
@@ -378,6 +447,7 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
+/// Returns the last `lines` lines of the default log, reading at most 256 KiB.
 pub fn tail_log(lines: usize) -> Vec<String> {
     tail_log_bounded(&log_path(), lines, 256 * 1024)
 }
@@ -405,6 +475,9 @@ fn tail_log_bounded(path: &Path, lines: usize, max_bytes: usize) -> Vec<String> 
     out
 }
 
+/// Runs the CLI with `args` and captures merged stdout and stderr.
+///
+/// ANSI escapes are stripped; a non-zero exit returns the captured text as an error.
 pub fn run_captured(args: &[String]) -> Result<String, String> {
     let output = cli_command(args)
         .output()
@@ -422,18 +495,21 @@ pub fn run_captured(args: &[String]) -> Result<String, String> {
     }
 }
 
+/// Builds a [`Command`] for the CLI selected by [`cli_bin`].
 pub fn cli_command(args: &[String]) -> Command {
     let mut command = Command::new(cli_bin());
     command.args(args);
     command
 }
 
+/// Configured CLI path: `$TERMUX_SYNC_BIN`, or `termux-sync` when unset.
 pub fn cli_bin() -> PathBuf {
     env::var_os("TERMUX_SYNC_BIN")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("termux-sync"))
 }
 
+/// Replaces a leading `~` with [`home`], leaving other paths unchanged.
 pub fn expand_home(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
         return home().join(rest).to_string_lossy().into_owned();
@@ -444,6 +520,7 @@ pub fn expand_home(path: &str) -> String {
     path.to_string()
 }
 
+/// Formats bytes with binary units and one decimal place.
 pub fn human_size(bytes: u64) -> String {
     let mut value = bytes as f64;
     for unit in ["B", "KB", "MB", "GB"] {
@@ -455,6 +532,7 @@ pub fn human_size(bytes: u64) -> String {
     format!("{value:.1} TB")
 }
 
+/// Backend-specific destination shown in the status overlay.
 pub fn status_target(config: &Config) -> String {
     match config.storage.as_str() {
         "local" => config.local_path.clone(),
@@ -478,6 +556,7 @@ pub fn status_target(config: &Config) -> String {
     }
 }
 
+/// Finds `name` in the first directory of `paths` that contains it.
 pub fn which_in(name: &str, paths: &[PathBuf]) -> Option<PathBuf> {
     paths
         .iter()
@@ -485,6 +564,7 @@ pub fn which_in(name: &str, paths: &[PathBuf]) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+/// Probes the tools the CLI requires for `storage`, preserving requirement flags.
 pub fn probe_tools(storage: &str, paths: &[PathBuf]) -> Vec<ToolStatus> {
     termux_sync_core::core::fsutil::required_tools(storage)
         .into_iter()
@@ -496,15 +576,18 @@ pub fn probe_tools(storage: &str, paths: &[PathBuf]) -> Vec<ToolStatus> {
         .collect()
 }
 
+/// Queries `--version` on a specific binary.
 pub fn cli_version_with(bin: &Path) -> Option<String> {
     let output = Command::new(bin).arg("--version").output().ok()?;
     parse_cli_version(output.status.success(), &output.stdout)
 }
 
+/// Queries `--version` on the configured CLI.
 pub fn cli_version() -> Option<String> {
     cli_version_with(&cli_bin())
 }
 
+/// Extracts the version line, but only when the command succeeded.
 pub fn parse_cli_version(success: bool, stdout: &[u8]) -> Option<String> {
     if !success {
         return None;
@@ -516,6 +599,7 @@ pub fn parse_cli_version(success: bool, stdout: &[u8]) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Probes tools from the current `PATH` and builds a status report.
 pub fn collect_status(config: &Config) -> StatusReport {
     let paths: Vec<PathBuf> = env::var_os("PATH")
         .map(|value| env::split_paths(&value).collect())
@@ -524,6 +608,7 @@ pub fn collect_status(config: &Config) -> StatusReport {
     status_report(config, cli_version(), tools)
 }
 
+/// Builds a status report from already-probed pieces.
 pub fn status_report(
     config: &Config,
     cli_version: Option<String>,
@@ -543,6 +628,7 @@ pub fn status_report(
     }
 }
 
+/// Replaces a leading `prefix` or `home` with `$PREFIX` or `~`.
 pub fn shorten_path(path: &Path, home: &Path, prefix: &Path) -> String {
     for (base, replacement) in [(prefix, "$PREFIX"), (home, "~")] {
         if base.as_os_str().is_empty() {
@@ -558,11 +644,13 @@ pub fn shorten_path(path: &Path, home: &Path, prefix: &Path) -> String {
     path.display().to_string()
 }
 
+/// Shortens a path using the current `PREFIX` and [`home`].
 pub fn short_path(path: &Path) -> String {
     let prefix = env::var_os("PREFIX").map(PathBuf::from).unwrap_or_default();
     shorten_path(path, &home(), &prefix)
 }
 
+/// Termux:Boot script that starts the daemon.
 pub fn boot_script_path() -> PathBuf {
     home()
         .join(".termux")
@@ -570,6 +658,7 @@ pub fn boot_script_path() -> PathBuf {
         .join("termux-sync-daemon.sh")
 }
 
+/// Up to five recent log lines that mention daemon activity, oldest first.
 pub fn daemon_activity(lines: &[String]) -> Vec<String> {
     let markers = [
         "Daemon",

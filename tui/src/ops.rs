@@ -21,103 +21,170 @@ enum LineRead {
     Oversize,
 }
 
+/// Operation the TUI can run with the event protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
+    /// Create and upload a backup.
     Backup,
+    /// Download and apply a backup.
     Restore,
 }
 
+/// Lifecycle state of an [`Operation`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
+    /// Work is in progress.
     Running,
+    /// Waiting for the user to type the restore confirmation.
     AwaitingConfirm,
+    /// Cancellation was requested and the process is stopping.
     Cancelling,
+    /// Finished without warnings.
     Succeeded,
+    /// Finished with warnings or partial failures.
     Warnings,
+    /// Finished with an error.
     Failed,
+    /// Stopped by user request.
     Cancelled,
 }
 
+/// Progress of one stage in an operation plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageState {
+    /// Not started.
     Pending,
+    /// Currently running.
     Active,
+    /// Finished successfully.
     Complete,
+    /// Finished with an error.
     Failed,
+    /// Not run for this operation.
     Skipped,
 }
 
+/// One weighted step of an operation's progress bar.
 #[derive(Debug, Clone)]
 pub struct Stage {
+    /// Stable stage identifier used to match progress events.
     pub id: String,
+    /// Human-readable stage name.
     pub label: String,
+    /// Relative share of the overall progress bar.
     pub weight: f32,
+    /// Current state of the stage.
     pub state: StageState,
 }
 
+/// Restore plan emitted before any files change.
 #[derive(Debug, Clone)]
 pub struct Plan {
+    /// Backup name.
     pub name: String,
+    /// Backup date as shown to the user.
     pub date: String,
+    /// Backup label, possibly empty.
     pub label: String,
+    /// Storage backend.
     pub storage: String,
+    /// CLI version that created the backup.
     pub backup_version: String,
+    /// CLI version running the restore.
     pub current_version: String,
+    /// Packages recorded in the backup.
     pub packages: usize,
+    /// Packages that would be installed, when known.
     pub to_install: Option<usize>,
+    /// Packages already at the backup version.
     pub already_installed: Option<usize>,
+    /// Packages present only on this device.
     pub device_only: Option<usize>,
+    /// Whether the package diff is available.
     pub diff_available: bool,
+    /// Archive names in the backup.
     pub archives: Vec<String>,
+    /// Total download or restore size in bytes.
     pub size: u64,
+    /// Checksum state; the value `failed` blocks confirmation.
     pub checksums: String,
 }
 
+/// Final result reported by the CLI.
 #[derive(Debug, Clone, Default)]
 pub struct Outcome {
+    /// True when the operation reported success.
     pub ok: bool,
+    /// Backup name, which may have been generated.
     pub name: String,
+    /// Bytes processed.
     pub size: u64,
+    /// Verification result, `None` when verification did not run.
     pub verified: Option<bool>,
+    /// Human-readable verification details.
     pub verify_details: String,
+    /// Packages considered.
     pub packages: usize,
+    /// Packages installed successfully.
     pub packages_installed: usize,
+    /// Packages that failed to install.
     pub packages_failed: Vec<String>,
+    /// Archives extracted.
     pub archives: usize,
+    /// Archives that failed to extract.
     pub archives_failed: Vec<String>,
+    /// Whether warnings were reported.
     pub warnings: bool,
+    /// Whether Termux must be restarted.
     pub restart_required: bool,
+    /// Reported duration in milliseconds.
     pub duration_ms: u64,
 }
 
+/// Error reported by the CLI, with an actionable hint.
 #[derive(Debug, Clone)]
 pub struct OpError {
+    /// What went wrong.
     pub message: String,
+    /// Suggested next step.
     pub hint: String,
+    /// Process exit code, when the CLI supplied one.
     pub exit_code: Option<i32>,
 }
 
+/// One line in an operation's log pane.
 #[derive(Debug, Clone)]
 pub struct LogEntry {
+    /// Log level such as `INFO` or `WARNING`.
     pub level: String,
+    /// Log message.
     pub message: String,
 }
 
+/// Package diff streamed in parts before a restore.
 #[derive(Debug, Clone, Default)]
 pub struct PackageDiff {
+    /// Packages to install.
     pub to_install: Vec<String>,
+    /// Packages already at the wanted version.
     pub already_installed: Vec<String>,
+    /// Packages only on this device.
     pub device_only: Vec<String>,
+    /// Received and expected part counts for `to_install`.
     pub to_install_parts: (usize, usize),
+    /// Received and expected part counts for `already_installed`.
     pub already_installed_parts: (usize, usize),
+    /// Received and expected part counts for `device_only`.
     pub device_only_parts: (usize, usize),
 }
 
 impl PackageDiff {
+    /// Total number of packages across all sections.
     pub fn total(&self) -> usize {
         self.to_install.len() + self.already_installed.len() + self.device_only.len()
     }
 
+    /// Whether every section has received all expected parts.
     pub fn complete(&self) -> bool {
         let complete = |(got, want): (usize, usize)| want == 0 || got >= want;
         complete(self.to_install_parts)
@@ -125,6 +192,9 @@ impl PackageDiff {
             && complete(self.device_only_parts)
     }
 
+    /// Section by index: 0 to install, 1 installed, 2 device-only.
+    ///
+    /// Indices above 2 fall back to device-only.
     pub fn section(&self, index: usize) -> &[String] {
         match index {
             0 => &self.to_install,
@@ -133,6 +203,7 @@ impl PackageDiff {
         }
     }
 
+    /// Merges one streamed part into its category, ignoring unknown categories.
     pub fn apply(&mut self, category: &str, part: usize, parts: usize, packages: Vec<String>) {
         match category {
             "to_install" => {
@@ -153,51 +224,89 @@ impl PackageDiff {
     }
 }
 
+/// One JSON event from the CLI's `--json-events` stream.
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// Operation started.
     Start {
+        /// Backup name.
         name: String,
+        /// Storage backend.
         storage: String,
     },
+    /// Backup metadata, used by `list`.
     Backup(Backup),
+    /// Stage list update.
     Stage {
+        /// Stage identifier.
         id: String,
+        /// Stage label.
         label: String,
+        /// New state for the stage.
         state: StageState,
+        /// One-based index in the stage list.
         index: usize,
+        /// Total number of stages.
         total: usize,
     },
+    /// Progress within the active stage.
     Progress {
+        /// Active stage id.
         stage: String,
+        /// Units completed so far.
         current: u64,
+        /// Total units, when known.
         total: Option<u64>,
+        /// Unit name, for example `files`.
         unit: Option<String>,
+        /// Extra detail for the current step.
         detail: Option<String>,
     },
+    /// A log line emitted during the operation.
     Log {
+        /// Log level.
         level: String,
+        /// Log message.
         message: String,
     },
+    /// Verification state change.
     Verify {
+        /// Verification state such as `ok` or `failed`.
         state: String,
+        /// Human-readable verification details.
         details: String,
     },
+    /// Restore plan.
     Plan(Plan),
+    /// One streamed part of the package diff.
     PackageDiff {
+        /// Diff category: `to_install`, `already_installed`, or `device_only`.
         category: String,
+        /// One-based part number.
         part: usize,
+        /// Total number of parts in this category.
         parts: usize,
+        /// Packages in this part.
         packages: Vec<String>,
     },
+    /// Final result.
     Result(Outcome),
+    /// Final error.
     Error(OpError),
+    /// Operation was cancelled.
     Cancelled {
+        /// Why the operation was cancelled.
         reason: String,
     },
+    /// The CLI does not support the requested protocol version.
     Unsupported(u64),
+    /// Unrecognized event kind.
     Unknown,
 }
 
+/// Parses one JSON event line.
+///
+/// Unknown event kinds become [`Event::Unknown`]; malformed input returns the serde error.
 pub fn parse_event(line: &str) -> Result<Event, String> {
     let value: Value = serde_json::from_str(line).map_err(|error| error.to_string())?;
     if value
@@ -591,10 +700,12 @@ enum Msg {
     Eof,
 }
 
+/// Lists backups through the configured CLI.
 pub fn collect_backups() -> Result<Vec<Backup>, String> {
     collect_backups_with(&data::cli_bin())
 }
 
+/// Lists backups through a specific binary, keeping only `backup` events.
 pub fn collect_backups_with(bin: &std::path::Path) -> Result<Vec<Backup>, String> {
     let output = std::process::Command::new(bin)
         .args(["list", "--json-events"])
@@ -612,6 +723,9 @@ pub fn collect_backups_with(bin: &std::path::Path) -> Result<Vec<Backup>, String
     Ok(backups)
 }
 
+/// Whether the CLI accepts `flag`, cached per process unless `TERMUX_SYNC_BIN` is set.
+///
+/// Probing runs `termux-sync logs <flag>` with output suppressed.
 pub fn supports_flag(flag: &str) -> bool {
     static CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -670,42 +784,73 @@ fn read_event_line<R: BufRead>(
     Ok(LineRead::Line)
 }
 
+/// Whether the CLI supports `--json-events`.
 pub fn supports_events() -> bool {
     supports_flag("--json-events")
 }
 
+/// Whether the CLI supports `--yes`.
 pub fn supports_yes() -> bool {
     supports_flag("--yes")
 }
 
+/// A running CLI child process and the state parsed from its events.
 pub struct Operation {
+    /// Backup or restore.
     pub kind: Kind,
+    /// Backup name supplied at startup.
     pub name: String,
+    /// Backend reported by the `start` event.
     pub storage: String,
+    /// Current lifecycle state.
     pub status: Status,
+    /// Stage list with per-stage state.
     pub stages: Vec<Stage>,
+    /// Active stage id.
     pub current_stage: Option<String>,
+    /// Progress within the active stage.
     pub stage_current: u64,
+    /// Total for the active stage, when known.
     pub stage_total: Option<u64>,
+    /// Unit for the active stage, for example `files`.
     pub stage_unit: Option<String>,
+    /// Extra detail for the active stage.
     pub stage_detail: Option<String>,
+    /// Verification state and details, once reported.
     pub verify: Option<(String, String)>,
+    /// Restore plan, once received.
     pub plan: Option<Plan>,
+    /// Streamed package diff.
     pub diff: PackageDiff,
+    /// Bounded operation log, oldest first.
     pub logs: VecDeque<LogEntry>,
+    /// Final outcome, once received.
     pub result: Option<Outcome>,
+    /// Final error, once received.
     pub error: Option<OpError>,
+    /// Transient message shown in the operation footer.
     pub notice: String,
+    /// What the user typed in the restore confirmation.
     pub confirm_text: String,
+    /// Whether the diff overlay is open.
     pub diff_open: bool,
+    /// Selected diff section (0, 1, or 2).
     pub diff_section: usize,
+    /// Current diff filter text.
     pub diff_filter: String,
+    /// Whether diff filter input has focus.
     pub diff_filtering: bool,
+    /// Scroll offset in the diff overlay.
     pub diff_scroll: usize,
+    /// Scroll offset in the log pane.
     pub log_offset: usize,
+    /// Whether cancellation is blocked by a protected restore.
     pub protected: bool,
+    /// Whether the cancel confirmation is shown.
     pub cancel_prompt: bool,
+    /// Disables spinner animation.
     pub reduce_motion: bool,
+    /// When the process was spawned.
     pub started: Instant,
     args: Vec<String>,
     child: Option<Child>,
@@ -719,6 +864,9 @@ pub struct Operation {
 }
 
 impl Operation {
+    /// Spawns the CLI with `--json-events` and starts reader threads.
+    ///
+    /// `name` is shown in the UI; `args` is the command line without the event flag.
     pub fn start(
         kind: Kind,
         name: &str,
@@ -832,6 +980,7 @@ impl Operation {
         })
     }
 
+    /// Drains child output and updates state, returning whether anything changed.
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
         let mut messages = Vec::new();
@@ -1129,6 +1278,9 @@ impl Operation {
         self.status = Status::Failed;
     }
 
+    /// Asks the CLI to stop, returning whether the request was accepted.
+    ///
+    /// Restores answer the confirmation prompt with `CANCEL`; running work gets `SIGINT`.
     pub fn request_cancel(&mut self) -> bool {
         if self.status == Status::AwaitingConfirm {
             let sent = self.send_stdin("{\"confirm\":\"CANCEL\"}");
@@ -1147,6 +1299,9 @@ impl Operation {
         true
     }
 
+    /// Sends the typed `RESTORE` confirmation.
+    ///
+    /// Returns false while not awaiting confirmation, when checksums failed, or when stdin is gone.
     pub fn confirm_restore(&mut self) -> bool {
         if self.status != Status::AwaitingConfirm {
             return false;
@@ -1194,6 +1349,9 @@ impl Operation {
         self.signal_group(libc::SIGKILL);
     }
 
+    /// Whether the current status permits a cancel request.
+    ///
+    /// Protected restores may not be interrupted.
     pub fn cancel_allowed(&self) -> bool {
         match self.status {
             Status::AwaitingConfirm => true,
@@ -1202,6 +1360,7 @@ impl Operation {
         }
     }
 
+    /// Whether the operation reached a terminal status.
     pub fn is_done(&self) -> bool {
         matches!(
             self.status,
@@ -1209,6 +1368,7 @@ impl Operation {
         )
     }
 
+    /// Whether the operation is running, awaiting confirmation, or cancelling.
     pub fn is_running(&self) -> bool {
         matches!(
             self.status,
@@ -1216,6 +1376,7 @@ impl Operation {
         )
     }
 
+    /// Weighted progress over non-skipped stages, clamped to `0.0..=1.0`.
     pub fn overall(&self) -> f32 {
         let total: f32 = self
             .stages
@@ -1245,6 +1406,7 @@ impl Operation {
         (done / total).clamp(0.0, 1.0)
     }
 
+    /// Human-readable progress for the active stage.
     pub fn progress_text(&self) -> String {
         let unit = self.stage_unit.as_deref().unwrap_or("");
         match (self.stage_current, self.stage_total) {
@@ -1256,14 +1418,17 @@ impl Operation {
         }
     }
 
+    /// Time since the process was spawned.
     pub fn elapsed(&self) -> Duration {
         self.started.elapsed()
     }
 
+    /// Arguments to reuse when retrying this operation.
     pub fn retry_args(&self) -> Vec<String> {
         self.args.clone()
     }
 
+    /// Appends a log line, dropping the oldest beyond [`LOG_LIMIT`].
     pub fn push_log(&mut self, level: &str, message: impl Into<String>) {
         self.logs.push_back(LogEntry {
             level: level.to_string(),
@@ -1274,6 +1439,7 @@ impl Operation {
         }
     }
 
+    /// Packages in the selected section matching the diff filter.
     pub fn filtered_diff(&self) -> Vec<String> {
         let filter = self.diff_filter.to_lowercase();
         self.diff

@@ -26,14 +26,19 @@ use xz2::write::XzEncoder;
 use crate::core::errors::CoreError;
 use crate::core::paths;
 
+/// Compression codec used for a backup archive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Codec {
+    /// gzip, the default codec.
     Gz,
+    /// bzip2.
     Bz2,
+    /// xz/LZMA.
     Xz,
 }
 
 impl Codec {
+    /// Map a configuration string to a codec; anything unknown falls back to [`Codec::Gz`].
     pub fn parse(compression: &str) -> Self {
         match compression {
             "bz2" => Self::Bz2,
@@ -42,6 +47,7 @@ impl Codec {
         }
     }
 
+    /// File-name extension without the leading dot (`gz`, `bz2`, `xz`).
     pub fn extension(self) -> &'static str {
         match self {
             Self::Gz => "gz",
@@ -51,22 +57,33 @@ impl Codec {
     }
 }
 
+/// Inputs controlling how an archive is written.
 #[derive(Debug, Clone)]
 pub struct ArchiveOptions {
+    /// Codec name as stored in configuration (`gz`, `bz2` or `xz`).
     pub compression: String,
+    /// Path patterns to leave out. Matching is on the archive-relative path
+    /// wrapped in slashes, so a bare name matches at any depth.
     pub excludes: Vec<String>,
+    /// Human-readable label kept in the manifest.
     pub label: String,
 }
 
+/// Where an archive was written and how large it is.
 #[derive(Debug, Clone)]
 pub struct ArchiveResult {
+    /// Final archive path, including the codec suffix.
     pub path: PathBuf,
+    /// Size in bytes of the finished archive.
     pub size: u64,
 }
 
+/// Outcome of extracting an archive.
 #[derive(Debug, Default)]
 pub struct ExtractResult {
+    /// Number of entries written to disk.
     pub extracted: usize,
+    /// Non-fatal problems encountered per entry; see [`is_ignorable_warning`].
     pub warnings: Vec<String>,
 }
 
@@ -167,6 +184,8 @@ fn relock(changed: Vec<(PathBuf, u32)>) {
     }
 }
 
+/// Give `archive_path` the suffix for `codec`, replacing any other archive
+/// suffix. Returns the path unchanged when it already ends with the wanted one.
 pub fn archive_path_for(archive_path: &Path, codec: Codec) -> PathBuf {
     let ext = format!(".tar.{}", codec.extension());
     if archive_path.to_string_lossy().ends_with(&ext) {
@@ -188,6 +207,10 @@ pub fn archive_path_for(archive_path: &Path, codec: Codec) -> PathBuf {
         .join(format!("{stem}{ext}"))
 }
 
+/// Write a tar archive of `source` into `sink`, returning the finished sink.
+///
+/// `on_member` is called with each entry's archive path and size before it is
+/// written; file modes changed to allow reading are restored on return.
 pub fn create_archive_to_writer<W: Write>(
     source: &Path,
     sink: W,
@@ -231,6 +254,8 @@ fn write_archive<W: Write>(
     }
 }
 
+/// Create an archive file for `source` at `archive_path` (suffix-corrected per
+/// the codec) and report its final path and size.
 pub fn create_archive(
     source: &Path,
     archive_path: &Path,
@@ -552,6 +577,12 @@ fn link_target(
     Ok(resolved)
 }
 
+/// Extract `archive_path` into `dest`, refusing entries and links that escape
+/// the destination or the `expected_top` directory.
+///
+/// `max_bytes` caps the total uncompressed data when set. Escapes, traversal
+/// and I/O failures are reported as warnings rather than aborting the restore;
+/// only an unreadable archive or a blown budget is an error.
 pub fn extract_archive(
     archive_path: &Path,
     dest: &Path,

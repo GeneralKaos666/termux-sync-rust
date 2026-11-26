@@ -6,14 +6,22 @@ use std::process::ExitCode;
 use termux_sync_core::core::errors::{self, CoreError};
 use termux_sync_core::port;
 
+/// Parsed command-line options shared by all subcommands.
 #[derive(Debug)]
 pub struct Options {
+    /// Emit machine-readable JSON events instead of prose.
     pub json_events: bool,
+    /// Skip interactive confirmation where the command supports it.
     pub yes: bool,
+    /// Enable verbose debug logging.
     pub debug: bool,
+    /// Line count for `logs`; defaults to 40.
     pub lines: i64,
+    /// Backup label from `--label`.
     pub label: String,
+    /// Backup name for restore or delete.
     pub name: String,
+    /// Positional target: a backup name or a path.
     pub target: String,
 }
 
@@ -182,6 +190,9 @@ fn parse_args(args: &[OsString]) -> Result<Parsed, String> {
     })
 }
 
+/// Parses process arguments, dispatches the command, and returns its exit code.
+///
+/// `tui` is forwarded to [`termux_sync_tui::main_entry`]; usage errors map to 2 and runtime errors to 1.
 pub fn run_from_argv() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     if args.first().is_some_and(|arg| arg == OsStr::new("tui")) {

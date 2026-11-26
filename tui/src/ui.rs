@@ -15,7 +15,9 @@ use crate::app::{ACTIONS, Action, App, Focus, OutputSource, Screen};
 use crate::data::{backup_age, human_size, parse_log_line};
 use crate::ops::{Kind, Operation, Plan, StageState, Status};
 
+/// Narrowest terminal the dashboard renders; below this it shows a size warning.
 pub const MIN_WIDTH: u16 = 48;
+/// Shortest terminal the dashboard renders.
 pub const MIN_HEIGHT: u16 = 12;
 const SPLIT_WIDTH: u16 = 80;
 
@@ -28,13 +30,18 @@ const MUTED: Color = Color::DarkGray;
 const GRADIENT_FROM: Color = Color::Rgb(70, 220, 255);
 const GRADIENT_TO: Color = Color::Rgb(210, 120, 255);
 
+/// Layout chosen for the current terminal size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutPlan {
+    /// Terminal is below [`MIN_WIDTH`] or [`MIN_HEIGHT`].
     TooSmall,
+    /// One-column layout used between the minimum and split widths.
     Single,
+    /// Two-column layout with side cards.
     Split,
 }
 
+/// Selects the layout for `area` from the minimum size and split threshold.
 pub fn plan(area: Rect) -> LayoutPlan {
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         LayoutPlan::TooSmall
@@ -45,6 +52,7 @@ pub fn plan(area: Rect) -> LayoutPlan {
     }
 }
 
+/// Renders one frame and records pane rectangles on `app` for hit testing.
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 

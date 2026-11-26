@@ -4,10 +4,15 @@
 //! handling, [`ops`] owns the child process and event protocol, [`data`] reads
 //! local state, and [`ui`] renders frames.
 
+/// Dashboard state: focus, overlays, worker tasks, and key and mouse handling.
 pub mod app;
+/// Reads local config, logs, backups, and status without caching.
 pub mod data;
+/// Persists recent backup and restore results for the history overlay.
 pub mod history;
+/// Spawns the CLI, parses its event stream, and tracks one operation.
 pub mod ops;
+/// Renders the dashboard and operation screens with ratatui.
 pub mod ui;
 
 use std::io::{self, IsTerminal, Write};
