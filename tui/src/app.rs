@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -326,8 +328,18 @@ pub struct HandoffInfo {
     pub detail: &'static str,
 }
 
+#[derive(Debug, Default)]
+struct FilteredCache {
+    filter: String,
+    revision: u64,
+    count: usize,
+    indices: Rc<[usize]>,
+}
+
 pub struct App {
     pub snapshot: Snapshot,
+    filtered_cache: RefCell<FilteredCache>,
+    backups_revision: u64,
     pub action_state: ListState,
     pub backup_state: TableState,
     pub backup_filter: String,
@@ -415,6 +427,8 @@ impl App {
 
         Self {
             snapshot,
+            filtered_cache: RefCell::new(FilteredCache::default()),
+            backups_revision: 0,
             action_state,
             backup_state,
             backup_filter: String::new(),
@@ -551,20 +565,34 @@ impl App {
         Some(FRAMES[(self.tick as usize / 2) % FRAMES.len()])
     }
 
-    pub fn filtered_backup_indices(&self) -> Vec<usize> {
-        let filter = self.backup_filter.to_lowercase();
-        self.snapshot
-            .backups
-            .iter()
-            .enumerate()
-            .filter(|(_, backup)| {
-                filter.is_empty()
-                    || backup.name.to_lowercase().contains(&filter)
-                    || backup.label.to_lowercase().contains(&filter)
-                    || backup.date.to_lowercase().contains(&filter)
-            })
-            .map(|(index, _)| index)
-            .collect()
+    /// Indices of backups matching the filter, cached until the filter text or
+    /// the backup list changes. Called several times per frame and per key press.
+    pub fn filtered_backup_indices(&self) -> Rc<[usize]> {
+        let mut cache = self.filtered_cache.borrow_mut();
+        if cache.filter != self.backup_filter
+            || cache.revision != self.backups_revision
+            || cache.count != self.snapshot.backups.len()
+        {
+            let filter = self.backup_filter.to_lowercase();
+            cache.indices = self
+                .snapshot
+                .backups
+                .iter()
+                .enumerate()
+                .filter(|(_, backup)| {
+                    filter.is_empty()
+                        || backup.name.to_lowercase().contains(&filter)
+                        || backup.label.to_lowercase().contains(&filter)
+                        || backup.date.to_lowercase().contains(&filter)
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>()
+                .into();
+            cache.filter.clone_from(&self.backup_filter);
+            cache.revision = self.backups_revision;
+            cache.count = self.snapshot.backups.len();
+        }
+        Rc::clone(&cache.indices)
     }
 
     pub fn selected_backup(&self) -> Option<&Backup> {
@@ -1640,6 +1668,7 @@ impl App {
     pub fn apply_backup_list(&mut self, backups: Vec<Backup>) {
         let count = backups.len();
         self.snapshot.backups = backups;
+        self.backups_revision += 1;
         self.snapshot.warning = None;
         self.backup_filter.clear();
         self.backup_filtering = false;
@@ -1664,6 +1693,7 @@ impl App {
                 .unwrap_or_else(|| "refreshed".to_string());
         }
         self.snapshot = snapshot;
+        self.backups_revision += 1;
         if !keep_output {
             self.output = data::tail_log(self.log_lines);
             self.output_source = OutputSource::Log;
@@ -1958,9 +1988,9 @@ mod tests {
     fn backup_filter_matches_name_and_label() {
         let mut app = App::with_snapshot(snapshot());
         app.backup_filter = "upgrade".into();
-        assert_eq!(app.filtered_backup_indices(), vec![1]);
+        assert_eq!(&*app.filtered_backup_indices(), &[1]);
         app.backup_filter = "backup-one".into();
-        assert_eq!(app.filtered_backup_indices(), vec![0]);
+        assert_eq!(&*app.filtered_backup_indices(), &[0]);
     }
 
     #[test]

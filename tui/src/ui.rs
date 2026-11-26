@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -100,7 +102,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     if app.show_status {
-        render_status(frame, area, app);
+        let max_scroll = render_status(frame, area, app);
+        app.status_scroll_max = max_scroll;
+        app.status_scroll = app.status_scroll.min(max_scroll);
     }
 
     if app.show_daemon {
@@ -1375,7 +1379,7 @@ fn render_backups(frame: &mut Frame, area: Rect, app: &mut App) {
         .unwrap_or(1)
         .max(1);
 
-    let rows = visible
+    let rows: Vec<Row> = visible
         .iter()
         .filter_map(|index| app.snapshot.backups.get(*index))
         .map(|backup| {
@@ -1391,7 +1395,9 @@ fn render_backups(frame: &mut Frame, area: Rect, app: &mut App) {
                 Cell::from(size_bar(backup.size, max_size, 6)).style(fg(SUCCESS)),
                 Cell::from(backup.packages.to_string()),
             ])
-        });
+        })
+        .collect();
+    let visible_len = visible.len();
 
     let header = Row::new(["NAME", "AGE", "SIZE", "USED", "PKGS"])
         .style(fg(MUTED).bold())
@@ -1412,7 +1418,7 @@ fn render_backups(frame: &mut Frame, area: Rect, app: &mut App) {
     scrollbar(
         frame,
         area,
-        visible.len(),
+        visible_len,
         area.height.saturating_sub(3) as usize,
         app.backup_state.selected().unwrap_or(0),
     );
@@ -1443,7 +1449,7 @@ fn render_output(frame: &mut Frame, area: Rect, app: &mut App) {
     scrollbar(frame, area, app.output.len(), inner_height, position);
 }
 
-fn render_log_line(line: &str) -> Line<'static> {
+fn render_log_line(line: &str) -> Line<'_> {
     let Some(parts) = parse_log_line(line) else {
         if line.starts_with("$ ") {
             return Line::from(Span::styled(line.to_string(), fg(ACCENT).bold()));
@@ -1454,7 +1460,7 @@ fn render_log_line(line: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(parts.timestamp, fg(MUTED)),
         Span::raw(" "),
-        level_chip(&parts.level),
+        level_chip(parts.level),
         Span::raw(" "),
         Span::raw(parts.message),
     ])
@@ -1661,9 +1667,9 @@ fn render_history(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn render_status(frame: &mut Frame, area: Rect, app: &mut App) {
-    let Some(report) = app.status_report.clone() else {
-        return;
+fn render_status(frame: &mut Frame, area: Rect, app: &App) -> usize {
+    let Some(report) = app.status_report.as_ref() else {
+        return 0;
     };
     let popup = centered(
         area,
@@ -1728,13 +1734,10 @@ fn render_status(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let content_width = popup.width.saturating_sub(4);
     let content_height = popup.height.saturating_sub(2) as usize;
-    let total = Paragraph::new(Text::from(lines.clone()))
-        .wrap(Wrap { trim: false })
-        .line_count(content_width);
+    let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+    let total = paragraph.line_count(content_width);
     let max_scroll = total.saturating_sub(content_height);
     let scroll = app.status_scroll.min(max_scroll);
-    app.status_scroll = scroll;
-    app.status_scroll_max = max_scroll;
     let detail = if max_scroll > 0 {
         "↑↓ scroll · Esc close"
     } else {
@@ -1743,13 +1746,13 @@ fn render_status(frame: &mut Frame, area: Rect, app: &mut App) {
 
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(Text::from(lines))
+        paragraph
             .block(pane_block("Status", Some(detail), true, ACCENT))
-            .wrap(Wrap { trim: false })
             .scroll((scroll as u16, 0)),
         popup,
     );
     scrollbar(frame, popup, total, content_height, scroll);
+    max_scroll
 }
 
 fn render_daemon(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -2116,7 +2119,8 @@ fn size_bar(size: u64, max: u64, width: usize) -> String {
 }
 
 fn no_color() -> bool {
-    std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty())
+    static NO_COLOR: OnceLock<bool> = OnceLock::new();
+    *NO_COLOR.get_or_init(|| std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()))
 }
 
 fn pane_block(title: &str, detail: Option<&str>, focused: bool, color: Color) -> Block<'static> {

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::env;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
@@ -52,22 +53,22 @@ pub struct Backup {
     pub modified: Option<SystemTime>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LogParts {
-    pub timestamp: String,
-    pub level: String,
-    pub message: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogParts<'a> {
+    pub timestamp: &'a str,
+    pub level: &'a str,
+    pub message: &'a str,
 }
 
-pub fn parse_log_line(line: &str) -> Option<LogParts> {
+pub fn parse_log_line(line: &str) -> Option<LogParts<'_>> {
     let rest = line.strip_prefix('[')?;
     let (timestamp, rest) = rest.split_once(']')?;
     let rest = rest.trim_start().strip_prefix('[')?;
     let (level, message) = rest.split_once(']')?;
     Some(LogParts {
-        timestamp: timestamp.to_string(),
-        level: level.to_string(),
-        message: message.trim_start().to_string(),
+        timestamp,
+        level,
+        message: message.trim_start(),
     })
 }
 
@@ -236,10 +237,18 @@ pub fn is_safe_backup_name(name: &str) -> bool {
         && !name.contains('\\')
 }
 
-pub fn strip_controls(text: &str) -> String {
-    text.chars()
-        .filter(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
-        .collect()
+pub fn strip_controls(text: &str) -> Cow<'_, str> {
+    if !text
+        .chars()
+        .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t'))
+    {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(
+        text.chars()
+            .filter(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
+            .collect(),
+    )
 }
 
 pub fn parse_manifest(value: &Value) -> Option<Backup> {
@@ -252,7 +261,8 @@ pub fn parse_manifest(value: &Value) -> Option<Backup> {
         .and_then(Value::as_str)
         .filter(|label| !label.is_empty() && *label != name)
         .map(strip_controls)
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_owned();
     let date = strip_controls(value.get("date").and_then(Value::as_str).unwrap_or("—"))
         .chars()
         .take(16)
@@ -273,12 +283,12 @@ pub fn parse_manifest(value: &Value) -> Option<Backup> {
         })
         .unwrap_or(0);
     Some(Backup {
-        name,
+        name: name.into_owned(),
         date,
         label,
         packages,
         size,
-        version: strip_controls(&string_field(value, "version", "—")),
+        version: strip_controls(&string_field(value, "version", "—")).into_owned(),
         compression: strip_controls(&string_field(value, "compression", "—")).to_uppercase(),
         modified: None,
     })

@@ -217,6 +217,7 @@ pub fn parse_event(line: &str) -> Result<Event, String> {
             .and_then(Value::as_str)
             .map(data::strip_controls)
             .unwrap_or_default()
+            .into_owned()
     };
     let number = |key: &str| value.get(key).and_then(Value::as_u64);
 
@@ -281,14 +282,16 @@ pub fn parse_event(line: &str) -> Result<Event, String> {
                     .and_then(|versions| versions.get("backup"))
                     .and_then(Value::as_str)
                     .unwrap_or("—"),
-            ),
+            )
+            .into_owned(),
             current_version: data::strip_controls(
                 value
                     .get("versions")
                     .and_then(|versions| versions.get("current"))
                     .and_then(Value::as_str)
                     .unwrap_or("—"),
-            ),
+            )
+            .into_owned(),
             packages: number("packages").unwrap_or(0) as usize,
             to_install: number("to_install").map(|n| n as usize),
             already_installed: number("already_installed").map(|n| n as usize),
