@@ -129,7 +129,7 @@ pub fn validate_patch(value: &Value) -> Result<(), CoreError> {
                     )));
                 }
             }
-            "local_path" => require_string(key, value)?,
+            "local_path" | "github_token" | "encrypt_password" => require_string(key, value)?,
             "gdrive_folder_id" => {
                 let Some(folder) = value.as_str() else {
                     return Err(patch_error("gdrive_folder_id must be a string"));
@@ -144,7 +144,6 @@ pub fn validate_patch(value: &Value) -> Result<(), CoreError> {
                     ));
                 }
             }
-            "github_token" => require_string(key, value)?,
             "github_repo" => {
                 let Some(repo) = value.as_str() else {
                     return Err(patch_error("github_repo must be a string"));
@@ -209,7 +208,6 @@ pub fn validate_patch(value: &Value) -> Result<(), CoreError> {
                     return Err(patch_error("encrypt must be a boolean"));
                 }
             }
-            "encrypt_password" => require_string(key, value)?,
             _ => return Err(patch_error(&format!("Unknown config key: {key}"))),
         }
     }

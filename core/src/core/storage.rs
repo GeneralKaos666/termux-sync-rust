@@ -64,6 +64,10 @@ impl LocalStorage {
         result
     }
 
+    #[expect(
+        clippy::unused_self,
+        reason = "kept as a method so upload keeps its backend shape"
+    )]
     fn stage_upload(
         &self,
         backup_dir: &Path,

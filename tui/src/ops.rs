@@ -1102,8 +1102,7 @@ impl Operation {
             Event::Error(error) => self.apply_error(error),
             Event::Cancelled { reason } => self.apply_cancelled(reason),
             Event::Unsupported(version) => self.apply_unsupported(version),
-            Event::Backup(_) => {}
-            Event::Unknown => {}
+            Event::Backup(_) | Event::Unknown => {}
         }
     }
 
@@ -1142,7 +1141,7 @@ impl Operation {
         if let Some(stage) = self.stages.iter_mut().find(|stage| stage.id == id) {
             stage.state = state;
             if !label.is_empty() {
-                stage.label = label.clone();
+                stage.label.clone_from(&label);
             }
         }
         let definition = stage_defs(self.kind);
@@ -1188,8 +1187,8 @@ impl Operation {
     }
 
     fn apply_plan(&mut self, plan: Plan) {
-        self.name = plan.name.clone();
-        self.storage = plan.storage.clone();
+        self.name.clone_from(&plan.name);
+        self.storage.clone_from(&plan.storage);
         self.plan = Some(plan);
         self.status = Status::AwaitingConfirm;
     }

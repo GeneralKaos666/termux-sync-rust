@@ -150,10 +150,8 @@ impl InputPrompt {
     #[must_use]
     pub fn seed(self) -> &'static str {
         match self {
-            InputPrompt::BackupLabel => "",
             InputPrompt::ExportConfig => "~/termux-sync-config-export.json",
-            InputPrompt::ImportConfig => "",
-            InputPrompt::CheckTarget => "",
+            InputPrompt::BackupLabel | InputPrompt::ImportConfig | InputPrompt::CheckTarget => "",
         }
     }
 
@@ -1829,7 +1827,7 @@ impl App {
         };
         let show_overlay = matches!(&task, Task::Command(_));
         if self.worker.start(task) {
-            self.status = label.clone();
+            self.status.clone_from(&label);
             if show_overlay {
                 self.task = Some(TaskOverlay {
                     label,

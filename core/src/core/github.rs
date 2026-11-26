@@ -344,6 +344,10 @@ impl GitHubStorage {
         self.split_file_at(src, tmp_dir, CHUNK_SIZE)
     }
 
+    #[expect(
+        clippy::unused_self,
+        reason = "kept as a method next to split_file for API symmetry"
+    )]
     fn split_file_at(
         &self,
         src: &Path,

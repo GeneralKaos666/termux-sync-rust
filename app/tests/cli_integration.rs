@@ -142,6 +142,10 @@ impl Fixture {
         .unwrap()
     }
 
+    #[expect(
+        clippy::unused_self,
+        reason = "kept on the fixture so call sites read uniformly"
+    )]
     fn backup_result(&self, output: &Output) -> String {
         assert!(
             output.status.success(),

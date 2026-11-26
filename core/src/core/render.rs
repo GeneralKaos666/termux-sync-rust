@@ -295,7 +295,6 @@ pub fn confirm(prompt: &str, default: bool) -> bool {
     match line.trim().to_lowercase().as_str() {
         "y" | "yes" => true,
         "n" | "no" => false,
-        "" => default,
         _ => default,
     }
 }
