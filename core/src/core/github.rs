@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use regex::Regex;
@@ -74,8 +74,10 @@ pub fn asset_matches(remote: &Value, local_size: u64) -> bool {
 pub fn part_groups(dest: &Path) -> Result<HashMap<String, Vec<PathBuf>>, CoreError> {
     let mut groups: HashMap<String, Vec<PathBuf>> = HashMap::new();
     let entries = fs::read_dir(dest).map_err(CoreError::os)?;
-    let part_re =
-        Regex::new(r"^(.+)\.part(\d{4})$").map_err(|error| CoreError::plain(error.to_string()))?;
+    static PART_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^(.+)\.part(\d{4})$").expect("part-name regex is a valid literal")
+    });
+    let part_re = &*PART_RE;
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if let Some(captures) = part_re.captures(&name)

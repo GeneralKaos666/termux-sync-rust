@@ -2,7 +2,6 @@
 
 use std::path::Path;
 
-use regex::Regex;
 use serde_json::Value;
 
 use crate::core::paths;
@@ -24,10 +23,17 @@ pub fn valid_backup_name(name: &str) -> bool {
 }
 
 pub fn clean_label(label: &str) -> String {
-    let Ok(pattern) = Regex::new(r"[^\w.-]+") else {
-        return label.trim_matches('_').to_string();
-    };
-    let replaced = pattern.replace_all(py_strip(label), "_");
+    // Python's `\w` is Unicode alphanumeric plus underscore.
+    let replaced: String = py_strip(label)
+        .chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() || matches!(ch, '_' | '.' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
     replaced.trim_matches('_').to_string()
 }
 

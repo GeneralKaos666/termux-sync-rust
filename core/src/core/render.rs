@@ -22,20 +22,26 @@ const BANNER: &str = r"
 ";
 
 fn canonical_line(line: &str) -> String {
-    let box_chars = "─═╭╮╰╯├┤┬┴┼│";
+    const BOX_CHARS: &str = "─═╭╮╰╯├┤┬┴┼│";
     let mut out = String::with_capacity(line.len());
     let mut index = 0usize;
-    let bytes: Vec<char> = line.chars().collect();
-    while index < bytes.len() {
-        let ch = bytes[index];
+    while index < line.len() {
+        let rest = &line[index..];
+        let Some(ch) = rest.chars().next() else {
+            break;
+        };
         if ch == '['
-            && let Some(close) = bytes[index + 1..].iter().position(|c| *c == ']')
+            && let Some(offset) = rest.find(']')
         {
-            let close = index + 1 + close;
-            let tag: String = bytes[index + 1..close].iter().collect();
-            let name = tag.trim_start_matches('/');
-            let is_markup = matches!(
-                name.split([' ', '=']).next().unwrap_or(""),
+            let close = index + offset;
+            let tag = &line[index + 1..close];
+            let name = tag
+                .trim_start_matches('/')
+                .split([' ', '='])
+                .next()
+                .unwrap_or("");
+            if matches!(
+                name,
                 "bold"
                     | "dim"
                     | "red"
@@ -51,20 +57,25 @@ fn canonical_line(line: &str) -> String {
                     | "blink"
                     | "strike"
                     | "link"
-            );
-            if is_markup {
+            ) {
                 index = close + 1;
                 continue;
             }
         }
-        if box_chars.contains(ch) {
-            out.push(' ');
+        let mapped = if BOX_CHARS.contains(ch) { ' ' } else { ch };
+        if mapped.is_whitespace() {
+            if !out.is_empty() && !out.ends_with(' ') {
+                out.push(' ');
+            }
         } else {
-            out.push(ch);
+            out.push(mapped);
         }
-        index += 1;
+        index += ch.len_utf8();
     }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
+    while out.ends_with(' ') {
+        out.pop();
+    }
+    out
 }
 
 pub fn print_line(text: &str) {
@@ -380,4 +391,24 @@ pub fn print_help() {
         print_line(&format!("    $ {example}"));
     }
     print_line("");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strips_rich_markup_tags() {
+        assert_eq!(canonical_line("[bold green]✓[/bold green] done"), "✓ done");
+    }
+
+    #[test]
+    fn replaces_box_drawing_and_collapses_spaces() {
+        assert_eq!(canonical_line("  a ──  b │ c  "), "a b c");
+    }
+
+    #[test]
+    fn leaves_unknown_brackets_alone() {
+        assert_eq!(canonical_line("[note] keep"), "[note] keep");
+    }
 }
