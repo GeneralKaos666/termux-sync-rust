@@ -614,59 +614,15 @@ impl App {
     }
 
     fn handle_key_with(&mut self, code: KeyCode, modifiers: KeyModifiers) {
-        if modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(code, KeyCode::Char('c') | KeyCode::Char('C'))
-        {
-            if let Some(operation) = &mut self.operation {
-                if operation.is_done() {
-                    self.should_quit = true;
-                } else if !operation.request_cancel() {
-                    operation.notice = "Restore in progress — cannot cancel safely".to_string();
-                }
-                return;
-            }
-            self.pending = None;
-            self.pending_confirm = None;
-            self.pending_input = None;
-            self.input_text.clear();
-            self.pending_handoff = None;
-            self.show_history = false;
-            self.show_status = false;
-            self.show_daemon = false;
-            self.should_quit = true;
+        if self.handle_key_ctrl_c(code, modifiers) {
             return;
         }
-        if let Some(action) = self.pending_confirm {
-            match code {
-                KeyCode::Enter | KeyCode::Char('y') => {
-                    self.pending_confirm = None;
-                    self.execute_confirmed_action(action);
-                }
-                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {
-                    self.pending_confirm = None;
-                    self.status = "cancelled".to_string();
-                }
-                _ => {}
-            }
+        if self.pending_confirm.is_some() {
+            self.handle_key_confirm(code);
             return;
         }
         if self.pending_handoff.is_some() {
-            match code {
-                KeyCode::Enter => {
-                    if let Some(handoff) = self.pending_handoff.take() {
-                        match handoff.action {
-                            Action::Setup => self.queue_command(vec!["setup"]),
-                            Action::Schedule => self.queue_command(vec!["schedule"]),
-                            _ => {}
-                        }
-                    }
-                }
-                KeyCode::Esc | KeyCode::Char('q') => {
-                    self.pending_handoff = None;
-                    self.status = "cancelled".to_string();
-                }
-                _ => {}
-            }
+            self.handle_key_handoff(code);
             return;
         }
         if self.pending_input.is_some() {
@@ -678,81 +634,15 @@ impl App {
             return;
         }
         if self.show_history {
-            match code {
-                KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q') => {
-                    self.show_history = false;
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.history_selected = self.history_selected.saturating_sub(1);
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if self.history_selected + 1 < self.history.len() {
-                        self.history_selected += 1;
-                    }
-                }
-                KeyCode::Char('r') => {
-                    if let Some(entry) = self.history.get(self.history_selected).cloned() {
-                        self.show_history = false;
-                        match history_command(&entry) {
-                            Some((kind, name, args)) => self.start_operation(kind, &name, args),
-                            None => self.status = "cannot retry this entry".to_string(),
-                        }
-                    }
-                }
-                _ => {}
-            }
+            self.handle_key_history(code);
             return;
         }
         if self.show_status {
-            match code {
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
-                    self.show_status = false;
-                    self.status_scroll = 0;
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.status_scroll = self
-                        .status_scroll
-                        .saturating_add(1)
-                        .min(self.status_scroll_max);
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.status_scroll = self.status_scroll.saturating_sub(1);
-                }
-                KeyCode::PageDown => {
-                    self.status_scroll = self
-                        .status_scroll
-                        .saturating_add(5)
-                        .min(self.status_scroll_max);
-                }
-                KeyCode::PageUp => self.status_scroll = self.status_scroll.saturating_sub(5),
-                _ => {}
-            }
+            self.handle_key_status(code);
             return;
         }
         if self.show_daemon {
-            match code {
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
-                    self.show_daemon = false;
-                    self.daemon_scroll = 0;
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.daemon_scroll = self
-                        .daemon_scroll
-                        .saturating_add(1)
-                        .min(self.daemon_scroll_max);
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.daemon_scroll = self.daemon_scroll.saturating_sub(1);
-                }
-                KeyCode::PageDown => {
-                    self.daemon_scroll = self
-                        .daemon_scroll
-                        .saturating_add(5)
-                        .min(self.daemon_scroll_max);
-                }
-                KeyCode::PageUp => self.daemon_scroll = self.daemon_scroll.saturating_sub(5),
-                _ => {}
-            }
+            self.handle_key_daemon(code);
             return;
         }
         if self.operation.is_some() {
@@ -764,22 +654,173 @@ impl App {
             return;
         }
         if self.show_help {
-            match code {
-                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
-                    self.show_help = false;
-                    self.help_scroll = 0;
-                }
-                KeyCode::Down | KeyCode::Char('j') => self.help_scroll += 1,
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.help_scroll = self.help_scroll.saturating_sub(1);
-                }
-                KeyCode::PageDown => self.help_scroll += 5,
-                KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(5),
-                _ => {}
-            }
+            self.handle_key_help(code);
             return;
         }
 
+        self.handle_key_dashboard(code);
+    }
+
+    /// Ctrl-C quits, or asks the running operation to cancel. Returns whether the
+    /// key was consumed, which is always true when the modifier matches.
+    fn handle_key_ctrl_c(&mut self, code: KeyCode, modifiers: KeyModifiers) -> bool {
+        if !(modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(code, KeyCode::Char('c') | KeyCode::Char('C')))
+        {
+            return false;
+        }
+        if let Some(operation) = &mut self.operation {
+            if operation.is_done() {
+                self.should_quit = true;
+            } else if !operation.request_cancel() {
+                operation.notice = "Restore in progress — cannot cancel safely".to_string();
+            }
+            return true;
+        }
+        self.pending = None;
+        self.pending_confirm = None;
+        self.pending_input = None;
+        self.input_text.clear();
+        self.pending_handoff = None;
+        self.show_history = false;
+        self.show_status = false;
+        self.show_daemon = false;
+        self.should_quit = true;
+        true
+    }
+
+    fn handle_key_confirm(&mut self, code: KeyCode) {
+        let Some(action) = self.pending_confirm else {
+            return;
+        };
+        match code {
+            KeyCode::Enter | KeyCode::Char('y') => {
+                self.pending_confirm = None;
+                self.execute_confirmed_action(action);
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {
+                self.pending_confirm = None;
+                self.status = "cancelled".to_string();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_key_handoff(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Enter => {
+                if let Some(handoff) = self.pending_handoff.take() {
+                    match handoff.action {
+                        Action::Setup => self.queue_command(vec!["setup"]),
+                        Action::Schedule => self.queue_command(vec!["schedule"]),
+                        _ => {}
+                    }
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.pending_handoff = None;
+                self.status = "cancelled".to_string();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_key_history(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q') => {
+                self.show_history = false;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.history_selected = self.history_selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.history_selected + 1 < self.history.len() {
+                    self.history_selected += 1;
+                }
+            }
+            KeyCode::Char('r') => {
+                if let Some(entry) = self.history.get(self.history_selected).cloned() {
+                    self.show_history = false;
+                    match history_command(&entry) {
+                        Some((kind, name, args)) => self.start_operation(kind, &name, args),
+                        None => self.status = "cannot retry this entry".to_string(),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_key_status(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+                self.show_status = false;
+                self.status_scroll = 0;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.status_scroll = self
+                    .status_scroll
+                    .saturating_add(1)
+                    .min(self.status_scroll_max);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.status_scroll = self.status_scroll.saturating_sub(1);
+            }
+            KeyCode::PageDown => {
+                self.status_scroll = self
+                    .status_scroll
+                    .saturating_add(5)
+                    .min(self.status_scroll_max);
+            }
+            KeyCode::PageUp => self.status_scroll = self.status_scroll.saturating_sub(5),
+            _ => {}
+        }
+    }
+
+    fn handle_key_daemon(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+                self.show_daemon = false;
+                self.daemon_scroll = 0;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.daemon_scroll = self
+                    .daemon_scroll
+                    .saturating_add(1)
+                    .min(self.daemon_scroll_max);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.daemon_scroll = self.daemon_scroll.saturating_sub(1);
+            }
+            KeyCode::PageDown => {
+                self.daemon_scroll = self
+                    .daemon_scroll
+                    .saturating_add(5)
+                    .min(self.daemon_scroll_max);
+            }
+            KeyCode::PageUp => self.daemon_scroll = self.daemon_scroll.saturating_sub(5),
+            _ => {}
+        }
+    }
+
+    fn handle_key_help(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+                self.show_help = false;
+                self.help_scroll = 0;
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.help_scroll += 1,
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.help_scroll = self.help_scroll.saturating_sub(1);
+            }
+            KeyCode::PageDown => self.help_scroll += 5,
+            KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(5),
+            _ => {}
+        }
+    }
+
+    /// Global shortcuts, then keys routed to the focused pane.
+    fn handle_key_dashboard(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') => self.open_help(),
@@ -1237,10 +1278,7 @@ impl App {
 
     pub fn handle_mouse(&mut self, column: u16, row: u16) {
         let point = Position::new(column, row);
-        if self.show_status {
-            return;
-        }
-        if self.show_daemon {
+        if self.show_status || self.show_daemon {
             return;
         }
         if self.pending_handoff.is_some() {
@@ -1281,24 +1319,40 @@ impl App {
             }
             return;
         }
-        if self.operation.is_some() {
-            return;
-        }
-        if self.pending.is_some() || self.task.is_some() || self.show_help {
+        if self.mouse_blocked() {
             return;
         }
 
+        if self.mouse_header(point) {
+            return;
+        }
+        if self.mouse_actions(point, row) {
+            return;
+        }
+        if self.mouse_backups(point, row) {
+            return;
+        }
+        self.mouse_output(point);
+    }
+
+    /// An operation or an in-flight job owns every click while it is open.
+    fn mouse_blocked(&self) -> bool {
+        self.operation.is_some() || self.pending.is_some() || self.task.is_some() || self.show_help
+    }
+
+    /// Header and stat tiles. Returns whether the click landed on one.
+    fn mouse_header(&mut self, point: Position) -> bool {
         if self.header_areas.warning.contains(point) {
             self.run(Action::Logs);
-            return;
+            return true;
         }
         if self.header_areas.count.contains(point) {
             self.switch_focus(Focus::Backups);
-            return;
+            return true;
         }
         if self.header_areas.status.contains(point) {
             self.run(Action::Logs);
-            return;
+            return true;
         }
         for (index, area) in self.stat_areas.iter().enumerate() {
             if area.contains(point) {
@@ -1308,45 +1362,59 @@ impl App {
                 } else {
                     self.switch_focus(Focus::Backups);
                 }
-                return;
+                return true;
             }
         }
+        false
+    }
 
-        if self.actions_area.contains(point) {
-            let first_row = self.actions_area.y.saturating_add(1);
-            let last_row = self
-                .actions_area
-                .y
-                .saturating_add(self.actions_area.height)
-                .saturating_sub(1);
-            if row >= first_row && row < last_row {
-                let index = (row - first_row) as usize + self.action_state.offset();
-                if index < ACTIONS.len() {
-                    self.action_state.select(Some(index));
-                    self.switch_focus(Focus::Actions);
-                    self.run(ACTIONS[index].action);
-                }
-            } else {
+    /// Actions pane: click a row to run it, or the pane chrome to focus it.
+    fn mouse_actions(&mut self, point: Position, row: u16) -> bool {
+        if !self.actions_area.contains(point) {
+            return false;
+        }
+        let first_row = self.actions_area.y.saturating_add(1);
+        let last_row = self
+            .actions_area
+            .y
+            .saturating_add(self.actions_area.height)
+            .saturating_sub(1);
+        if row >= first_row && row < last_row {
+            let index = (row - first_row) as usize + self.action_state.offset();
+            if index < ACTIONS.len() {
+                self.action_state.select(Some(index));
                 self.switch_focus(Focus::Actions);
+                self.run(ACTIONS[index].action);
             }
-            return;
+        } else {
+            self.switch_focus(Focus::Actions);
         }
+        true
+    }
 
-        if self.backups_area.contains(point) {
-            self.switch_focus(Focus::Backups);
-            let first_data = self.backups_area.y.saturating_add(2);
-            if row >= first_data {
-                let index = (row - first_data) as usize + self.backup_state.offset();
-                if index < self.filtered_backup_indices().len() {
-                    self.backup_state.select(Some(index));
-                }
+    /// Backups pane: focus it and select the clicked row when it hits the list.
+    fn mouse_backups(&mut self, point: Position, row: u16) -> bool {
+        if !self.backups_area.contains(point) {
+            return false;
+        }
+        self.switch_focus(Focus::Backups);
+        let first_data = self.backups_area.y.saturating_add(2);
+        if row >= first_data {
+            let index = (row - first_data) as usize + self.backup_state.offset();
+            if index < self.filtered_backup_indices().len() {
+                self.backup_state.select(Some(index));
             }
-            return;
         }
+        true
+    }
 
-        if self.output_area.contains(point) {
-            self.switch_focus(Focus::Output);
+    /// Output pane: focus it when clicked.
+    fn mouse_output(&mut self, point: Position) -> bool {
+        if !self.output_area.contains(point) {
+            return false;
         }
+        self.switch_focus(Focus::Output);
+        true
     }
 
     fn handle_actions_key(&mut self, code: KeyCode) {

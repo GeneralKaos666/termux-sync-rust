@@ -571,87 +571,13 @@ fn render_restore_plan(frame: &mut Frame, area: Rect, operation: &Operation) {
     };
 
     let block = op_block("Restore plan", WARN);
-    let compact = block.inner(area).height < 9;
-    let mut lines = Vec::new();
-    let diff = diff_counts(plan);
-
-    if compact {
-        lines.push(warning_line(plan));
-        lines.push(confirm_line(operation));
-        if block.inner(area).height >= 4 {
-            lines.push(Line::from(Span::styled(
-                " d  package diff · Esc cancel",
-                fg(MUTED),
-            )));
-        }
+    let inner_height = block.inner(area).height;
+    let compact = inner_height < 9;
+    let lines = if compact {
+        compact_plan_lines(operation, plan, inner_height)
     } else {
-        lines.push(Line::from(vec![
-            Span::styled(" Backup   ", fg(MUTED)),
-            Span::styled(plan.name.clone(), fg(Color::Reset).bold()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(" Date     ", fg(MUTED)),
-            Span::raw(crate::data::normalize_date(&plan.date)),
-            Span::styled("   Label ", fg(MUTED)),
-            Span::raw(if plan.label.is_empty() {
-                "—".to_string()
-            } else {
-                plan.label.clone()
-            }),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(" Size     ", fg(MUTED)),
-            Span::raw(human_size(plan.size)),
-            Span::styled("   Storage ", fg(MUTED)),
-            Span::raw(plan.storage.to_uppercase()),
-            Span::styled("   Archives ", fg(MUTED)),
-            Span::raw(plan.archives.len().to_string()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(" Versions ", fg(MUTED)),
-            Span::raw(format!("backup {}", plan.backup_version)),
-            Span::styled("   current ", fg(MUTED)),
-            Span::raw(plan.current_version.clone()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(" Packages ", fg(MUTED)),
-            Span::styled(plan.packages.to_string(), fg(SUCCESS).bold()),
-            Span::styled(" total · ", fg(MUTED)),
-            Span::styled(
-                diff.unwrap_or_else(|| "diff unavailable".to_string()),
-                fg(MUTED),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(" Device   ", fg(MUTED)),
-            Span::styled(
-                format!(
-                    "{} device-only packages stay installed",
-                    plan.device_only.unwrap_or(0)
-                ),
-                fg(MUTED),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled(" Verify   ", fg(MUTED)),
-            Span::styled(
-                if plan.checksums == "pending" {
-                    "checksums verify before extraction"
-                } else {
-                    &plan.checksums
-                },
-                fg(MUTED),
-            ),
-        ]));
-        lines.push(Line::from(""));
-        lines.push(warning_line(plan));
-        lines.push(Line::from(""));
-        lines.push(confirm_line(operation));
-        lines.push(Line::from(Span::styled(
-            " d  package diff · Esc cancel",
-            fg(MUTED),
-        )));
-    }
+        expanded_plan_lines(operation, plan)
+    };
 
     frame.render_widget(
         Paragraph::new(Text::from(lines))
@@ -659,6 +585,92 @@ fn render_restore_plan(frame: &mut Frame, area: Rect, operation: &Operation) {
             .wrap(Wrap { trim: true }),
         area,
     );
+}
+
+fn compact_plan_lines(operation: &Operation, plan: &Plan, inner_height: u16) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    lines.push(warning_line(plan));
+    lines.push(confirm_line(operation));
+    if inner_height >= 4 {
+        lines.push(Line::from(Span::styled(
+            " d  package diff · Esc cancel",
+            fg(MUTED),
+        )));
+    }
+    lines
+}
+
+fn expanded_plan_lines(operation: &Operation, plan: &Plan) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let diff = diff_counts(plan);
+
+    lines.push(Line::from(vec![
+        Span::styled(" Backup   ", fg(MUTED)),
+        Span::styled(plan.name.clone(), fg(Color::Reset).bold()),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(" Date     ", fg(MUTED)),
+        Span::raw(crate::data::normalize_date(&plan.date)),
+        Span::styled("   Label ", fg(MUTED)),
+        Span::raw(if plan.label.is_empty() {
+            "—".to_string()
+        } else {
+            plan.label.clone()
+        }),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(" Size     ", fg(MUTED)),
+        Span::raw(human_size(plan.size)),
+        Span::styled("   Storage ", fg(MUTED)),
+        Span::raw(plan.storage.to_uppercase()),
+        Span::styled("   Archives ", fg(MUTED)),
+        Span::raw(plan.archives.len().to_string()),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(" Versions ", fg(MUTED)),
+        Span::raw(format!("backup {}", plan.backup_version)),
+        Span::styled("   current ", fg(MUTED)),
+        Span::raw(plan.current_version.clone()),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(" Packages ", fg(MUTED)),
+        Span::styled(plan.packages.to_string(), fg(SUCCESS).bold()),
+        Span::styled(" total · ", fg(MUTED)),
+        Span::styled(
+            diff.unwrap_or_else(|| "diff unavailable".to_string()),
+            fg(MUTED),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(" Device   ", fg(MUTED)),
+        Span::styled(
+            format!(
+                "{} device-only packages stay installed",
+                plan.device_only.unwrap_or(0)
+            ),
+            fg(MUTED),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(" Verify   ", fg(MUTED)),
+        Span::styled(
+            if plan.checksums == "pending" {
+                "checksums verify before extraction".to_string()
+            } else {
+                plan.checksums.clone()
+            },
+            fg(MUTED),
+        ),
+    ]));
+    lines.push(Line::from(""));
+    lines.push(warning_line(plan));
+    lines.push(Line::from(""));
+    lines.push(confirm_line(operation));
+    lines.push(Line::from(Span::styled(
+        " d  package diff · Esc cancel",
+        fg(MUTED),
+    )));
+    lines
 }
 
 fn render_package_diff(frame: &mut Frame, area: Rect, operation: &Operation) {
@@ -688,7 +700,43 @@ fn render_package_diff(frame: &mut Frame, area: Rect, operation: &Operation) {
         [warning, tabs, Rect::default(), list]
     };
 
-    let warning = if plan.diff_available {
+    let warning = package_diff_warning(plan, narrow);
+    frame.render_widget(
+        Paragraph::new(warning).wrap(Wrap { trim: true }),
+        warning_area,
+    );
+
+    let tabs = package_diff_tabs(operation, narrow);
+    frame.render_widget(Paragraph::new(tabs), tabs_area);
+
+    if show_filter {
+        let filter = package_diff_filter(operation);
+        frame.render_widget(Paragraph::new(filter).style(fg(MUTED)), filter_area);
+    }
+
+    let block = if list_area.height >= 6 {
+        Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(fg(MUTED))
+            .title(Span::styled(package_diff_title(operation), fg(MUTED)))
+    } else {
+        Block::default()
+    };
+    let inner_height = block.inner(list_area).height as usize;
+    let packages = operation.filtered_diff();
+    let len = packages.len();
+    let max_offset = len.saturating_sub(inner_height);
+    let offset = operation.diff_scroll.min(max_offset);
+    let end = len.saturating_sub(offset);
+    let start = end.saturating_sub(inner_height);
+    let lines = package_diff_lines(&packages, start, end);
+    frame.render_widget(Paragraph::new(Text::from(lines)).block(block), list_area);
+    let position = packages.len().saturating_sub(1).saturating_sub(offset);
+    scrollbar(frame, list_area, packages.len(), inner_height, position);
+}
+
+fn package_diff_warning(plan: &Plan, narrow: bool) -> Text<'static> {
+    if plan.diff_available {
         if narrow {
             Text::from(vec![
                 Line::from(Span::styled(
@@ -740,12 +788,10 @@ fn render_package_diff(frame: &mut Frame, area: Rect, operation: &Operation) {
                 fg(WARN),
             )),
         ])
-    };
-    frame.render_widget(
-        Paragraph::new(warning).wrap(Wrap { trim: true }),
-        warning_area,
-    );
+    }
+}
 
+fn package_diff_tabs(operation: &Operation, narrow: bool) -> Line<'static> {
     let categories = if narrow {
         [
             ("1 NEW", operation.diff.to_install.len()),
@@ -775,48 +821,36 @@ fn render_package_diff(frame: &mut Frame, area: Rect, operation: &Operation) {
         };
         tabs.push(Span::styled(format!("{label} ({count})"), style));
     }
-    frame.render_widget(Paragraph::new(Line::from(tabs)), tabs_area);
+    Line::from(tabs)
+}
 
-    if show_filter {
-        let filter = if operation.diff_filtering {
-            format!("/ {}{}", operation.diff_filter, "█")
-        } else if operation.diff_filter.is_empty() {
-            " / to filter · 1/2/3 sections · Esc back".to_string()
-        } else {
-            format!(" filter: {}", operation.diff_filter)
-        };
-        frame.render_widget(Paragraph::new(filter).style(fg(MUTED)), filter_area);
-    }
-
-    let block = if list_area.height >= 6 {
-        Block::bordered()
-            .border_type(BorderType::Rounded)
-            .border_style(fg(MUTED))
-            .title(Span::styled(
-                if operation.diff.complete() {
-                    format!(" Packages · {} ", operation.diff.total())
-                } else {
-                    format!(" Packages · {} · partial diff ", operation.diff.total())
-                },
-                fg(MUTED),
-            ))
+fn package_diff_filter(operation: &Operation) -> String {
+    if operation.diff_filtering {
+        format!("/ {}{}", operation.diff_filter, "█")
+    } else if operation.diff_filter.is_empty() {
+        " / to filter · 1/2/3 sections · Esc back".to_string()
     } else {
-        Block::default()
-    };
-    let inner_height = block.inner(list_area).height as usize;
-    let packages = operation.filtered_diff();
-    let len = packages.len();
-    let max_offset = len.saturating_sub(inner_height);
-    let offset = operation.diff_scroll.min(max_offset);
-    let end = len.saturating_sub(offset);
-    let start = end.saturating_sub(inner_height);
-    let lines: Vec<Line> = packages[start..end]
+        format!(" filter: {}", operation.diff_filter)
+    }
+}
+
+fn package_diff_title(operation: &Operation) -> String {
+    if operation.diff.complete() {
+        format!(" Packages · {} ", operation.diff.total())
+    } else {
+        format!(" Packages · {} · partial diff ", operation.diff.total())
+    }
+}
+
+fn package_diff_lines(packages: &[String], start: usize, end: usize) -> Vec<Line<'static>> {
+    packages[start..end]
         .iter()
-        .map(|package| Line::from(format!("  {package}")))
-        .collect();
-    frame.render_widget(Paragraph::new(Text::from(lines)).block(block), list_area);
-    let position = packages.len().saturating_sub(1).saturating_sub(offset);
-    scrollbar(frame, list_area, packages.len(), inner_height, position);
+        .map(|package| package_diff_row(package))
+        .collect()
+}
+
+fn package_diff_row(package: &str) -> Line<'static> {
+    Line::from(format!("  {package}"))
 }
 
 fn render_operation_result(frame: &mut Frame, area: Rect, operation: &Operation) {

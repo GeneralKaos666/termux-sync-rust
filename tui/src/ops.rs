@@ -212,156 +212,182 @@ pub fn parse_event(line: &str) -> Result<Event, String> {
         .get("event")
         .and_then(Value::as_str)
         .ok_or_else(|| "missing event field".to_string())?;
-    let text = |key: &str| {
-        value
-            .get(key)
-            .and_then(Value::as_str)
-            .map(data::strip_controls)
-            .unwrap_or_default()
-            .into_owned()
-    };
-    let number = |key: &str| value.get(key).and_then(Value::as_u64);
 
     Ok(match name {
-        "start" => Event::Start {
-            name: text("name"),
-            storage: text("storage"),
-        },
-        "backup" if data::is_safe_backup_name(&text("name")) => Event::Backup(Backup {
-            name: text("name"),
-            date: text("date").replace('T', " ").chars().take(16).collect(),
-            label: text("label"),
-            packages: number("packages").unwrap_or(0) as usize,
-            size: number("size").unwrap_or(0),
-            version: text("version"),
-            compression: text("compression").to_uppercase(),
-            modified: None,
-        }),
-        "backup" => Event::Unknown,
-        "stage" => Event::Stage {
-            id: text("id"),
-            label: text("label"),
-            state: match value.get("state").and_then(Value::as_str).unwrap_or("") {
-                "start" => StageState::Active,
-                "complete" => StageState::Complete,
-                "failed" => StageState::Failed,
-                "skipped" => StageState::Skipped,
-                _ => StageState::Pending,
-            },
-            index: number("index").unwrap_or(0) as usize,
-            total: number("total").unwrap_or(0) as usize,
-        },
-        "progress" => Event::Progress {
-            stage: text("stage"),
-            current: number("current").unwrap_or(0),
-            total: number("total"),
-            unit: value
-                .get("unit")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            detail: value
-                .get("detail")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-        },
-        "log" => Event::Log {
-            level: text("level"),
-            message: text("message"),
-        },
-        "verify" => Event::Verify {
-            state: text("state"),
-            details: text("details"),
-        },
-        "plan" => Event::Plan(Plan {
-            name: text("name"),
-            date: text("date"),
-            label: text("label"),
-            storage: text("storage"),
-            backup_version: data::strip_controls(
-                value
-                    .get("versions")
-                    .and_then(|versions| versions.get("backup"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("—"),
-            )
-            .into_owned(),
-            current_version: data::strip_controls(
-                value
-                    .get("versions")
-                    .and_then(|versions| versions.get("current"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("—"),
-            )
-            .into_owned(),
-            packages: number("packages").unwrap_or(0) as usize,
-            to_install: number("to_install").map(|n| n as usize),
-            already_installed: number("already_installed").map(|n| n as usize),
-            device_only: number("device_only").map(|n| n as usize),
-            diff_available: value
-                .get("diff_available")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            archives: value
-                .get("archives")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            size: number("size").unwrap_or(0),
-            checksums: text("checksums"),
-        }),
-        "package_diff" => Event::PackageDiff {
-            category: text("category"),
-            part: number("part").unwrap_or(1) as usize,
-            parts: number("parts").unwrap_or(1) as usize,
-            packages: value
-                .get("packages")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default(),
-        },
-        "result" => Event::Result(Outcome {
-            ok: value.get("ok").and_then(Value::as_bool).unwrap_or(false),
-            name: text("name"),
-            size: number("size").unwrap_or(0),
-            verified: value.get("verified").and_then(Value::as_bool),
-            verify_details: text("verify_details"),
-            packages: number("packages").unwrap_or(0) as usize,
-            packages_installed: number("packages_installed").unwrap_or(0) as usize,
-            packages_failed: string_list(&value, "packages_failed"),
-            archives: number("archives").unwrap_or(0) as usize,
-            archives_failed: string_list(&value, "archives_failed"),
-            warnings: value
-                .get("warnings")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            restart_required: value
-                .get("restart_required")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            duration_ms: number("duration_ms").unwrap_or(0),
-        }),
-        "error" => Event::Error(OpError {
-            message: text("message"),
-            hint: text("hint"),
-            exit_code: number("exit_code").map(|n| n as i32),
-        }),
-        "cancelled" => Event::Cancelled {
-            reason: text("reason"),
-        },
+        "start" => parse_start(&value),
+        "backup" => parse_backup(&value),
+        "stage" => parse_stage(&value),
+        "progress" => parse_progress(&value),
+        "log" => parse_log(&value),
+        "verify" => parse_verify(&value),
+        "plan" => parse_plan(&value),
+        "package_diff" => parse_package_diff(&value),
+        "result" => parse_result(&value),
+        "error" => parse_error(&value),
+        "cancelled" => parse_cancelled(&value),
         _ => Event::Unknown,
     })
+}
+
+fn json_text(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(data::strip_controls)
+        .unwrap_or_default()
+        .into_owned()
+}
+
+fn json_number(value: &Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(Value::as_u64)
+}
+
+fn json_bool(value: &Value, key: &str) -> Option<bool> {
+    value.get(key).and_then(Value::as_bool)
+}
+
+fn parse_start(value: &Value) -> Event {
+    Event::Start {
+        name: json_text(value, "name"),
+        storage: json_text(value, "storage"),
+    }
+}
+
+fn parse_backup(value: &Value) -> Event {
+    let name = json_text(value, "name");
+    if !data::is_safe_backup_name(&name) {
+        return Event::Unknown;
+    }
+    Event::Backup(Backup {
+        name,
+        date: json_text(value, "date")
+            .replace('T', " ")
+            .chars()
+            .take(16)
+            .collect(),
+        label: json_text(value, "label"),
+        packages: json_number(value, "packages").unwrap_or(0) as usize,
+        size: json_number(value, "size").unwrap_or(0),
+        version: json_text(value, "version"),
+        compression: json_text(value, "compression").to_uppercase(),
+        modified: None,
+    })
+}
+
+fn parse_stage(value: &Value) -> Event {
+    Event::Stage {
+        id: json_text(value, "id"),
+        label: json_text(value, "label"),
+        state: match value.get("state").and_then(Value::as_str).unwrap_or("") {
+            "start" => StageState::Active,
+            "complete" => StageState::Complete,
+            "failed" => StageState::Failed,
+            "skipped" => StageState::Skipped,
+            _ => StageState::Pending,
+        },
+        index: json_number(value, "index").unwrap_or(0) as usize,
+        total: json_number(value, "total").unwrap_or(0) as usize,
+    }
+}
+
+fn parse_progress(value: &Value) -> Event {
+    Event::Progress {
+        stage: json_text(value, "stage"),
+        current: json_number(value, "current").unwrap_or(0),
+        total: json_number(value, "total"),
+        unit: value
+            .get("unit")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        detail: value
+            .get("detail")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    }
+}
+
+fn parse_log(value: &Value) -> Event {
+    Event::Log {
+        level: json_text(value, "level"),
+        message: json_text(value, "message"),
+    }
+}
+
+fn parse_verify(value: &Value) -> Event {
+    Event::Verify {
+        state: json_text(value, "state"),
+        details: json_text(value, "details"),
+    }
+}
+
+fn parse_plan(value: &Value) -> Event {
+    let version_text = |key: &str| {
+        data::strip_controls(
+            value
+                .get("versions")
+                .and_then(|versions| versions.get(key))
+                .and_then(Value::as_str)
+                .unwrap_or("—"),
+        )
+        .into_owned()
+    };
+    Event::Plan(Plan {
+        name: json_text(value, "name"),
+        date: json_text(value, "date"),
+        label: json_text(value, "label"),
+        storage: json_text(value, "storage"),
+        backup_version: version_text("backup"),
+        current_version: version_text("current"),
+        packages: json_number(value, "packages").unwrap_or(0) as usize,
+        to_install: json_number(value, "to_install").map(|n| n as usize),
+        already_installed: json_number(value, "already_installed").map(|n| n as usize),
+        device_only: json_number(value, "device_only").map(|n| n as usize),
+        diff_available: json_bool(value, "diff_available").unwrap_or(false),
+        archives: string_list(value, "archives"),
+        size: json_number(value, "size").unwrap_or(0),
+        checksums: json_text(value, "checksums"),
+    })
+}
+
+fn parse_package_diff(value: &Value) -> Event {
+    Event::PackageDiff {
+        category: json_text(value, "category"),
+        part: json_number(value, "part").unwrap_or(1) as usize,
+        parts: json_number(value, "parts").unwrap_or(1) as usize,
+        packages: string_list(value, "packages"),
+    }
+}
+
+fn parse_result(value: &Value) -> Event {
+    Event::Result(Outcome {
+        ok: json_bool(value, "ok").unwrap_or(false),
+        name: json_text(value, "name"),
+        size: json_number(value, "size").unwrap_or(0),
+        verified: json_bool(value, "verified"),
+        verify_details: json_text(value, "verify_details"),
+        packages: json_number(value, "packages").unwrap_or(0) as usize,
+        packages_installed: json_number(value, "packages_installed").unwrap_or(0) as usize,
+        packages_failed: string_list(value, "packages_failed"),
+        archives: json_number(value, "archives").unwrap_or(0) as usize,
+        archives_failed: string_list(value, "archives_failed"),
+        warnings: json_bool(value, "warnings").unwrap_or(false),
+        restart_required: json_bool(value, "restart_required").unwrap_or(false),
+        duration_ms: json_number(value, "duration_ms").unwrap_or(0),
+    })
+}
+
+fn parse_error(value: &Value) -> Event {
+    Event::Error(OpError {
+        message: json_text(value, "message"),
+        hint: json_text(value, "hint"),
+        exit_code: json_number(value, "exit_code").map(|n| n as i32),
+    })
+}
+
+fn parse_cancelled(value: &Value) -> Event {
+    Event::Cancelled {
+        reason: json_text(value, "reason"),
+    }
 }
 
 fn string_list(value: &Value, key: &str) -> Vec<String> {
@@ -719,136 +745,171 @@ impl Operation {
 
     fn apply(&mut self, event: Event) {
         match event {
-            Event::Start { name, storage } => {
-                if !name.is_empty() {
-                    self.name = name;
-                }
-                self.storage = storage;
-            }
+            Event::Start { name, storage } => self.apply_start(name, storage),
             Event::Stage {
                 id,
                 label,
                 state,
                 index,
                 total,
-            } => {
-                if !id.is_empty() {
-                    if (id.starts_with("extract:") || id == "packages" || id == "cleanup")
-                        && state == StageState::Active
-                        && self.kind == Kind::Restore
-                    {
-                        self.protected = true;
-                    }
-                    if !self.stages.iter().any(|stage| stage.id == id) {
-                        self.stages.push(Stage {
-                            id: id.clone(),
-                            label: label.clone(),
-                            weight: 0.0,
-                            state: StageState::Pending,
-                        });
-                    }
-                    if let Some(stage) = self.stages.iter_mut().find(|stage| stage.id == id) {
-                        stage.state = state;
-                        if !label.is_empty() {
-                            stage.label = label.clone();
-                        }
-                    }
-                    let definition = stage_defs(self.kind);
-                    let stage_label = definition
-                        .iter()
-                        .find(|(stage_id, _, _)| *stage_id == id)
-                        .map(|(_, label, _)| *label)
-                        .unwrap_or(label.as_str())
-                        .to_string();
-                    self.current_stage = Some(id);
-                    self.stage_current = 0;
-                    self.stage_total = None;
-                    self.stage_unit = None;
-                    self.stage_detail = None;
-                    self.push_log(
-                        "DEBUG",
-                        format!(
-                            "stage {}/{} {}: {}",
-                            index,
-                            total,
-                            stage_label,
-                            state_label(state)
-                        ),
-                    );
-                }
-            }
+            } => self.apply_stage(id, label, state, index, total),
             Event::Progress {
                 stage,
                 current,
                 total,
                 unit,
                 detail,
-            } => {
-                self.current_stage = Some(stage);
-                self.stage_current = current;
-                self.stage_total = total;
-                self.stage_unit = unit;
-                self.stage_detail = detail;
-            }
+            } => self.apply_progress(stage, current, total, unit, detail),
             Event::Log { level, message } => self.push_log(&level, message),
-            Event::Verify { state, details } => self.verify = Some((state, details)),
-            Event::Plan(plan) => {
-                self.name = plan.name.clone();
-                self.storage = plan.storage.clone();
-                self.plan = Some(plan);
-                self.status = Status::AwaitingConfirm;
-            }
+            Event::Verify { state, details } => self.apply_verify(state, details),
+            Event::Plan(plan) => self.apply_plan(plan),
             Event::PackageDiff {
                 category,
                 part,
                 parts,
                 packages,
             } => self.diff.apply(&category, part, parts, packages),
-            Event::Result(outcome) => {
-                self.name = if outcome.name.is_empty() {
-                    self.name.clone()
-                } else {
-                    outcome.name.clone()
-                };
-                self.status = if !outcome.ok {
-                    Status::Failed
-                } else if outcome.warnings {
-                    Status::Warnings
-                } else {
-                    Status::Succeeded
-                };
-                if !outcome.ok {
-                    self.error = Some(OpError {
-                        message: "termux-sync reported failure".to_string(),
-                        hint: outcome.verify_details.clone(),
-                        exit_code: None,
-                    });
-                }
-                self.result = Some(outcome);
-                self.protected = false;
-                self.cancel_prompt = false;
-            }
-            Event::Error(error) => {
-                self.status = Status::Failed;
-                self.error = Some(error);
-            }
-            Event::Cancelled { reason } => {
-                self.status = Status::Cancelled;
-                if !reason.is_empty() {
-                    self.notice = format!("cancelled: {reason}");
-                }
-            }
-            Event::Unsupported(version) => {
-                self.status = Status::Failed;
-                self.error = Some(OpError {
-                    message: format!("event protocol v{version} is newer than this TUI supports"),
-                    hint: "Update termux-sync-tui.".to_string(),
-                    exit_code: None,
-                });
-            }
+            Event::Result(outcome) => self.apply_result(outcome),
+            Event::Error(error) => self.apply_error(error),
+            Event::Cancelled { reason } => self.apply_cancelled(reason),
+            Event::Unsupported(version) => self.apply_unsupported(version),
             Event::Backup(_) => {}
             Event::Unknown => {}
         }
+    }
+
+    fn apply_start(&mut self, name: String, storage: String) {
+        if !name.is_empty() {
+            self.name = name;
+        }
+        self.storage = storage;
+    }
+
+    fn apply_stage(
+        &mut self,
+        id: String,
+        label: String,
+        state: StageState,
+        index: usize,
+        total: usize,
+    ) {
+        if id.is_empty() {
+            return;
+        }
+        if (id.starts_with("extract:") || id == "packages" || id == "cleanup")
+            && state == StageState::Active
+            && self.kind == Kind::Restore
+        {
+            self.protected = true;
+        }
+        if !self.stages.iter().any(|stage| stage.id == id) {
+            self.stages.push(Stage {
+                id: id.clone(),
+                label: label.clone(),
+                weight: 0.0,
+                state: StageState::Pending,
+            });
+        }
+        if let Some(stage) = self.stages.iter_mut().find(|stage| stage.id == id) {
+            stage.state = state;
+            if !label.is_empty() {
+                stage.label = label.clone();
+            }
+        }
+        let definition = stage_defs(self.kind);
+        let stage_label = definition
+            .iter()
+            .find(|(stage_id, _, _)| *stage_id == id)
+            .map(|(_, label, _)| *label)
+            .unwrap_or(label.as_str())
+            .to_string();
+        self.current_stage = Some(id);
+        self.stage_current = 0;
+        self.stage_total = None;
+        self.stage_unit = None;
+        self.stage_detail = None;
+        self.push_log(
+            "DEBUG",
+            format!(
+                "stage {}/{} {}: {}",
+                index,
+                total,
+                stage_label,
+                state_label(state)
+            ),
+        );
+    }
+
+    fn apply_progress(
+        &mut self,
+        stage: String,
+        current: u64,
+        total: Option<u64>,
+        unit: Option<String>,
+        detail: Option<String>,
+    ) {
+        self.current_stage = Some(stage);
+        self.stage_current = current;
+        self.stage_total = total;
+        self.stage_unit = unit;
+        self.stage_detail = detail;
+    }
+
+    fn apply_verify(&mut self, state: String, details: String) {
+        self.verify = Some((state, details));
+    }
+
+    fn apply_plan(&mut self, plan: Plan) {
+        self.name = plan.name.clone();
+        self.storage = plan.storage.clone();
+        self.plan = Some(plan);
+        self.status = Status::AwaitingConfirm;
+    }
+
+    fn apply_result(&mut self, outcome: Outcome) {
+        self.name = if outcome.name.is_empty() {
+            self.name.clone()
+        } else {
+            outcome.name.clone()
+        };
+        self.status = if !outcome.ok {
+            Status::Failed
+        } else if outcome.warnings {
+            Status::Warnings
+        } else {
+            Status::Succeeded
+        };
+        if !outcome.ok {
+            self.error = Some(OpError {
+                message: "termux-sync reported failure".to_string(),
+                hint: outcome.verify_details.clone(),
+                exit_code: None,
+            });
+        }
+        self.result = Some(outcome);
+        self.protected = false;
+        self.cancel_prompt = false;
+    }
+
+    fn apply_error(&mut self, error: OpError) {
+        self.status = Status::Failed;
+        self.error = Some(error);
+    }
+
+    fn apply_cancelled(&mut self, reason: String) {
+        self.status = Status::Cancelled;
+        if !reason.is_empty() {
+            self.notice = format!("cancelled: {reason}");
+        }
+    }
+
+    fn apply_unsupported(&mut self, version: u64) {
+        self.status = Status::Failed;
+        self.error = Some(OpError {
+            message: format!("event protocol v{version} is newer than this TUI supports"),
+            hint: "Update termux-sync-tui.".to_string(),
+            exit_code: None,
+        });
     }
 
     fn finalize_exit(&mut self) {
