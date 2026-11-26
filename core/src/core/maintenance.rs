@@ -723,13 +723,12 @@ pub fn check(target: &str) -> Result<Value, CoreError> {
     }
     let total = sizes.iter().sum::<i64>().max(1);
     render::print_line("Location Size Usage");
-    for ((label, path), size) in paths.iter().zip(sizes.iter()) {
+    for ((label, _path), size) in paths.iter().zip(sizes.iter()) {
         render::print_line(&format!(
             "  {label:<20} {}  {}",
             fmt::human_size(*size),
             fmt::pct_bar(*size, total, 24)
         ));
-        let _ = path;
     }
     if paths.len() == 1 {
         let (_, path) = &paths[0];
@@ -867,7 +866,7 @@ pub fn clear_cache(assume_yes: bool) -> Result<Value, CoreError> {
     let mut cleared = 0i64;
     let mut failures: Vec<String> = Vec::new();
     for index in selected {
-        let (label, path, size) = &existing[index];
+        let (_label, path, size) = &existing[index];
         let mut cleared_here = 0u64;
         match fs::read_dir(path) {
             Ok(entries) => {
@@ -902,7 +901,6 @@ pub fn clear_cache(assume_yes: bool) -> Result<Value, CoreError> {
                 fmt::human_size(*size)
             ),
         );
-        let _ = label;
     }
     render::print_line(&format!(
         "  Done! Freed approximately {}",
