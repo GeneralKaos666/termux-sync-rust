@@ -193,7 +193,7 @@ pub fn run_from_argv() -> ExitCode {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
         return match termux_sync_tui::main_entry("termux-sync tui", &rest) {
-            Ok(()) => ExitCode::SUCCESS,
+            Ok(code) => code,
             Err(error) => {
                 eprintln!("termux-sync tui: {error}");
                 ExitCode::from(1)

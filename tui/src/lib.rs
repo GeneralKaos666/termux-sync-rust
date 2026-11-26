@@ -11,6 +11,7 @@ pub mod ops;
 pub mod ui;
 
 use std::io::{self, IsTerminal, Write};
+use std::process::ExitCode;
 use std::time::Duration;
 
 use ratatui::DefaultTerminal;
@@ -28,18 +29,22 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const FRAME_TIME: Duration = Duration::from_millis(50);
 const IDLE_TIME: Duration = Duration::from_millis(1_000);
 
-pub fn main_entry(program: &str, args: &[String]) -> io::Result<()> {
+/// Runs the dashboard, returning the exit code the caller should propagate.
+///
+/// The no-terminal case is reported as [`ExitCode::from(2)`] instead of
+/// terminating the process, so callers keep control of process exit.
+pub fn main_entry(program: &str, args: &[String]) -> io::Result<ExitCode> {
     if args.iter().any(|arg| arg == "--version" || arg == "-V") {
         println!("{program} {VERSION}");
-        return Ok(());
+        return Ok(ExitCode::SUCCESS);
     }
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help(program);
-        return Ok(());
+        return Ok(ExitCode::SUCCESS);
     }
     if !io::stdout().is_terminal() {
         eprintln!("{program}: refusing to start: stdout is not a terminal");
-        std::process::exit(2);
+        return Ok(ExitCode::from(2));
     }
 
     install_panic_hook();
@@ -52,7 +57,8 @@ pub fn main_entry(program: &str, args: &[String]) -> io::Result<()> {
     };
     let result = run(&mut terminal, args);
     restore_terminal();
-    result
+    result?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run(terminal: &mut DefaultTerminal, args: &[String]) -> io::Result<()> {
