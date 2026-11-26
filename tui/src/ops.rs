@@ -1,7 +1,8 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -406,14 +407,28 @@ pub fn collect_backups_with(bin: &std::path::Path) -> Result<Vec<Backup>, String
 }
 
 pub fn supports_flag(flag: &str) -> bool {
+    static CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    // Tests point TERMUX_SYNC_BIN at a fixture binary, so keep those probes live.
+    let cacheable = std::env::var_os("TERMUX_SYNC_BIN").is_none();
+    if cacheable
+        && let Ok(map) = cache.lock()
+        && let Some(answer) = map.get(flag)
+    {
+        return *answer;
+    }
     let mut command = data::cli_command(&["logs".to_string(), flag.to_string()]);
-    command
+    let answer = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
-        .unwrap_or(false)
+        .unwrap_or(false);
+    if cacheable && let Ok(mut map) = cache.lock() {
+        map.insert(flag.to_string(), answer);
+    }
+    answer
 }
 
 #[cfg(test)]
@@ -561,7 +576,8 @@ impl Operation {
         }
 
         let stages = stage_defs(kind)
-            .into_iter()
+            .iter()
+            .copied()
             .map(|(id, label, weight)| Stage {
                 id: id.to_string(),
                 label: label.to_string(),
@@ -925,6 +941,9 @@ impl Operation {
     fn signal_group(&self, signal: i32) {
         if let Some(child) = &self.child {
             let pid = child.id() as i32;
+            // SAFETY: the child was spawned with `process_group(0)` (see `start`),
+            // so its pid is also the process-group id and no other process shares
+            // the group. `kill` only reads the pid and signal arguments.
             unsafe {
                 libc::kill(-pid, signal);
             }
@@ -1026,26 +1045,30 @@ impl Operation {
     }
 }
 
-fn stage_defs(kind: Kind) -> Vec<(&'static str, &'static str, f32)> {
+const BACKUP_STAGES: &[(&str, &str, f32)] = &[
+    ("preflight", "Preflight", 2.0),
+    ("packages", "Packages", 5.0),
+    ("archive:home", "Home", 50.0),
+    ("archive:usr_etc", "Config", 13.0),
+    ("manifest", "Manifest", 5.0),
+    ("upload", "Upload", 20.0),
+    ("verify", "Verify", 5.0),
+];
+
+const RESTORE_STAGES: &[(&str, &str, f32)] = &[
+    ("metadata", "Metadata", 2.0),
+    ("download", "Download", 25.0),
+    ("verify", "Verify", 15.0),
+    ("extract:home", "Home", 20.0),
+    ("extract:usr_etc", "Config", 5.0),
+    ("packages", "Packages", 28.0),
+    ("cleanup", "Cleanup", 5.0),
+];
+
+fn stage_defs(kind: Kind) -> &'static [(&'static str, &'static str, f32)] {
     match kind {
-        Kind::Backup => vec![
-            ("preflight", "Preflight", 2.0),
-            ("packages", "Packages", 5.0),
-            ("archive:home", "Home", 50.0),
-            ("archive:usr_etc", "Config", 13.0),
-            ("manifest", "Manifest", 5.0),
-            ("upload", "Upload", 20.0),
-            ("verify", "Verify", 5.0),
-        ],
-        Kind::Restore => vec![
-            ("metadata", "Metadata", 2.0),
-            ("download", "Download", 25.0),
-            ("verify", "Verify", 15.0),
-            ("extract:home", "Home", 20.0),
-            ("extract:usr_etc", "Config", 5.0),
-            ("packages", "Packages", 28.0),
-            ("cleanup", "Cleanup", 5.0),
-        ],
+        Kind::Backup => BACKUP_STAGES,
+        Kind::Restore => RESTORE_STAGES,
     }
 }
 
@@ -1074,7 +1097,8 @@ fn human_count(value: u64) -> String {
 #[cfg(test)]
 pub fn test_operation(kind: Kind) -> Operation {
     let stages = stage_defs(kind)
-        .into_iter()
+        .iter()
+        .copied()
         .map(|(id, label, weight)| Stage {
             id: id.to_string(),
             label: label.to_string(),

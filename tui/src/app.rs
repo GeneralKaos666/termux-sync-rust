@@ -403,12 +403,16 @@ impl Default for App {
 
 impl App {
     pub fn new() -> Self {
+        let (history, history_error) = match HistoryStore::load(&data::history_path()) {
+            Ok(entries) => (entries, None),
+            Err(error) => (Vec::new(), Some(format!("history: {error}"))),
+        };
         let mut app = Self::with_snapshot(Snapshot::default());
-        app.history = HistoryStore::load(&data::history_path());
+        app.history = history;
         app.loading = true;
         app.status = "loading backups…".to_string();
         app.refresh();
-        app.status = "loading backups…".to_string();
+        app.status = history_error.unwrap_or_else(|| "loading backups…".to_string());
         app
     }
 
@@ -421,8 +425,7 @@ impl App {
         }
         let output = snapshot.log.clone();
         let status = snapshot
-            .warning
-            .clone()
+            .warning_text()
             .unwrap_or_else(|| "ready".to_string());
 
         Self {
@@ -1171,13 +1174,17 @@ impl App {
             };
             self.history.insert(0, entry);
             self.history.truncate(20);
-            let _ = HistoryStore::save(&data::history_path(), &self.history);
         }
         if let Some(name) = success_name {
             if !name.is_empty() {
                 self.pending_select = Some(name);
             }
             self.refresh();
+        }
+        // Save after the refresh so a write failure stays visible in the footer.
+        if finished && let Err(error) = HistoryStore::save(&data::history_path(), &mut self.history)
+        {
+            self.status = format!("history save failed: {error}");
         }
         changed
     }
@@ -1669,7 +1676,7 @@ impl App {
         let count = backups.len();
         self.snapshot.backups = backups;
         self.backups_revision += 1;
-        self.snapshot.warning = None;
+        self.snapshot.warning = Vec::new();
         self.backup_filter.clear();
         self.backup_filtering = false;
         self.backup_state.select((count > 0).then_some(0));
@@ -1688,8 +1695,7 @@ impl App {
         self.loading = false;
         if !keep_output {
             self.status = snapshot
-                .warning
-                .clone()
+                .warning_text()
                 .unwrap_or_else(|| "refreshed".to_string());
         }
         self.snapshot = snapshot;
@@ -1852,7 +1858,7 @@ mod tests {
                 },
             ],
             log: vec!["ready".to_string()],
-            warning: None,
+            warning: Vec::new(),
         }
     }
 
@@ -2532,7 +2538,7 @@ mod list_apply_tests {
     #[test]
     fn applying_a_list_replaces_backups_and_clears_warning() {
         let mut app = App::with_snapshot(Snapshot::default());
-        app.snapshot.warning = Some("remote".into());
+        app.snapshot.warning = vec!["remote".to_string()];
         app.apply_backup_list(vec![Backup {
             name: "b1".into(),
             date: "2026-01-01".into(),
@@ -2544,7 +2550,7 @@ mod list_apply_tests {
             modified: None,
         }]);
         assert_eq!(app.snapshot.backups.len(), 1);
-        assert!(app.snapshot.warning.is_none());
+        assert!(app.snapshot.warning.is_empty());
         assert_eq!(app.focus, Focus::Backups);
     }
 }

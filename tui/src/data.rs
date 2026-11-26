@@ -77,7 +77,14 @@ pub struct Snapshot {
     pub config: Config,
     pub backups: Vec<Backup>,
     pub log: Vec<String>,
-    pub warning: Option<String>,
+    pub warning: Vec<String>,
+}
+
+impl Snapshot {
+    /// Joins every warning into the single line the UI renders.
+    pub fn warning_text(&self) -> Option<String> {
+        (!self.warning.is_empty()).then(|| self.warning.join(" · "))
+    }
 }
 
 pub fn home() -> PathBuf {
@@ -105,7 +112,7 @@ pub fn history_path() -> PathBuf {
 }
 
 pub fn load_snapshot() -> Snapshot {
-    let mut warning = None;
+    let mut warning = Vec::new();
 
     let config = match fs::read_to_string(config_path()) {
         Ok(text) => match serde_json::from_str::<Value>(&text) {
@@ -117,7 +124,7 @@ pub fn load_snapshot() -> Snapshot {
                 parse_config(&value, &schedule)
             }
             Err(err) => {
-                warning = Some(format!("config.json is not valid JSON: {err}"));
+                warning.push(format!("config.json is not valid JSON: {err}"));
                 Config::default()
             }
         },
@@ -128,12 +135,12 @@ pub fn load_snapshot() -> Snapshot {
         match load_local_backups(Path::new(&expand_home(&config.local_path))) {
             Ok(list) => list,
             Err(err) => {
-                warning = Some(err);
+                warning.push(err);
                 Vec::new()
             }
         }
     } else {
-        warning = Some(format!(
+        warning.push(format!(
             "{} storage: press L to list backups in the TUI",
             config.storage.to_uppercase()
         ));

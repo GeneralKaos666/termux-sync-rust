@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::OnceLock;
 
 use ratatui::Frame;
@@ -540,19 +541,14 @@ fn render_operation_log(frame: &mut Frame, area: Rect, operation: &Operation) {
     let end = len.saturating_sub(offset);
     let start = end.saturating_sub(inner_height);
 
-    let lines: Vec<Line> = operation
-        .logs
-        .iter()
-        .skip(start)
-        .take(end - start)
-        .map(|entry| {
-            Line::from(vec![
-                level_chip(&entry.level),
-                Span::raw(" "),
-                Span::raw(crate::data::strip_controls(&entry.message)),
-            ])
-        })
-        .collect();
+    let mut lines: Vec<Line> = Vec::with_capacity(end - start);
+    for entry in operation.logs.iter().skip(start).take(end - start) {
+        lines.push(Line::from(vec![
+            level_chip(&entry.level),
+            Span::raw(" "),
+            Span::raw(crate::data::strip_controls(&entry.message)),
+        ]));
+    }
 
     frame.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
     let position = operation
@@ -1181,7 +1177,7 @@ fn render_hero(frame: &mut Frame, area: Rect, app: &mut App) {
         Span::raw(" "),
         count_text(&count_label, count_color),
     ];
-    if app.snapshot.warning.is_some() {
+    if !app.snapshot.warning.is_empty() {
         chips.push(Span::raw(" "));
         chips.push(Span::styled("WARN", fg(WARN).bold()));
     }
@@ -1191,7 +1187,7 @@ fn render_hero(frame: &mut Frame, area: Rect, app: &mut App) {
         width: right.width.saturating_sub(6),
         height: 1,
     };
-    if app.snapshot.warning.is_some() {
+    if !app.snapshot.warning.is_empty() {
         app.header_areas.warning = Rect {
             x: right.x + right.width.saturating_sub(5),
             y: right.y,
@@ -1350,8 +1346,7 @@ fn render_backups(frame: &mut Frame, area: Rect, app: &mut App) {
             format!("No backup matches '{}'", app.backup_filter)
         } else {
             app.snapshot
-                .warning
-                .clone()
+                .warning_text()
                 .unwrap_or_else(|| "No local backups. Press R to refresh.".to_string())
         };
         let (title, message) = if app.loading {
@@ -1474,11 +1469,25 @@ fn level_chip(level: &str) -> Span<'static> {
         "DEBUG" => ("DEBUG", MUTED),
         other => (other, MUTED),
     };
-    if no_color() {
-        Span::styled(format!("[{label}]"), Style::new().bold())
+    // Known levels reuse static strings; only unknown levels need to allocate.
+    let no_color = no_color();
+    let text = match (no_color, label) {
+        (true, "INFO") => Cow::Borrowed("[INFO]"),
+        (true, "WARN") => Cow::Borrowed("[WARN]"),
+        (true, "ERROR") => Cow::Borrowed("[ERROR]"),
+        (true, "DEBUG") => Cow::Borrowed("[DEBUG]"),
+        (true, other) => Cow::Owned(format!("[{other}]")),
+        (false, "INFO") => Cow::Borrowed(" INFO "),
+        (false, "WARN") => Cow::Borrowed(" WARN "),
+        (false, "ERROR") => Cow::Borrowed(" ERROR "),
+        (false, "DEBUG") => Cow::Borrowed(" DEBUG "),
+        (false, other) => Cow::Owned(format!(" {other} ")),
+    };
+    if no_color {
+        Span::styled(text, Style::new().bold())
     } else {
         Span::styled(
-            format!(" {label} "),
+            text,
             Style::new()
                 .fg(Color::Black)
                 .bg(color)
@@ -1490,17 +1499,17 @@ fn level_chip(level: &str) -> Span<'static> {
 fn render_footer(frame: &mut Frame, area: Rect, app: &mut App) {
     let (marker, marker_style) = if let Some(frame) = app.spinner() {
         (frame, fg(ACCENT).bold())
-    } else if app.snapshot.warning.is_some() {
+    } else if !app.snapshot.warning.is_empty() {
         ("●", fg(WARN))
     } else {
         ("●", fg(SUCCESS))
     };
-    let status_style = if app.snapshot.warning.is_some() {
+    let status_style = if !app.snapshot.warning.is_empty() {
         fg(WARN)
     } else {
         fg(MUTED)
     };
-    let warning = app.snapshot.warning.is_some();
+    let warning = !app.snapshot.warning.is_empty();
     let mut status_spans = vec![Span::styled(format!(" {marker} "), marker_style)];
     if warning {
         status_spans.push(Span::styled("warning: ", fg(WARN).bold()));
@@ -2167,7 +2176,7 @@ mod tests {
                 modified: None,
             }],
             log: vec!["2026-01-01 12:00 [INFO] Backup completed".to_string()],
-            warning: None,
+            warning: Vec::new(),
         })
     }
 
@@ -2231,7 +2240,7 @@ mod tests {
         let mut app = app();
         app.snapshot.config.storage = "github".into();
         app.snapshot.backups.clear();
-        app.snapshot.warning = Some("GITHUB storage".into());
+        app.snapshot.warning = vec!["GITHUB storage".into()];
         let frame = render_app(&mut app, 56, 24);
         assert!(frame.contains("GITHUB"));
         assert!(frame.contains("0 BACKUPS"));
@@ -2482,7 +2491,7 @@ mod tests {
     fn remote_warning_does_not_claim_list_is_outside() {
         let mut app = app();
         app.snapshot.config.storage = "github".into();
-        app.snapshot.warning = Some("GITHUB storage: press L to list backups in the TUI".into());
+        app.snapshot.warning = vec!["GITHUB storage: press L to list backups in the TUI".into()];
         let frame = render_app(&mut app, 80, 24);
         assert!(!frame.contains("in the terminal"));
     }
@@ -2490,7 +2499,7 @@ mod tests {
     #[test]
     fn warning_state_labels_the_warn_chip_and_status() {
         let mut app = app();
-        app.snapshot.warning = Some("GITHUB storage".to_string());
+        app.snapshot.warning = vec!["GITHUB storage".to_string()];
         app.status = "GITHUB storage".to_string();
         let frame = render_app(&mut app, 100, 30);
         assert!(frame.contains("WARN"));
