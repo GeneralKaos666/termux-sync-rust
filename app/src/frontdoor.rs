@@ -6,6 +6,7 @@ use std::process::ExitCode;
 use termux_sync_core::core::errors::{self, CoreError};
 use termux_sync_core::port;
 
+#[derive(Debug)]
 pub struct Options {
     pub json_events: bool,
     pub yes: bool,
@@ -53,20 +54,13 @@ fn parse_int(raw: &str) -> Option<i64> {
     if trimmed.is_empty() {
         return None;
     }
-    let sign = if trimmed.starts_with('-') { -1 } else { 1 };
-    let digits = trimmed.trim_start_matches(['-', '+']).replace('_', "");
-    if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
-        return None;
-    }
-    digits.parse::<i64>().ok().map(|value| value * sign)
+    trimmed.replace('_', "").parse::<i64>().ok()
 }
 
 fn usage(message: &str) -> ExitCode {
     let _ = port::print_error(
         "Invalid usage".to_string(),
-        message
-            .replace("argument --lines/", "--lines")
-            .replace("argument ", ""),
+        message.to_string(),
         "Run termux-sync help to see the correct usage.".to_string(),
         String::new(),
     );
@@ -100,21 +94,15 @@ fn report_error(error: &CoreError) -> ExitCode {
     ExitCode::from(1)
 }
 
-pub fn run_from_argv() -> ExitCode {
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    if args.first().is_some_and(|arg| arg == OsStr::new("tui")) {
-        let rest: Vec<String> = args[1..]
-            .iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
-        return match termux_sync_tui::main_entry("termux-sync tui", &rest) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("termux-sync tui: {error}");
-                ExitCode::from(1)
-            }
-        };
-    }
+#[derive(Debug)]
+struct Parsed {
+    opts: Options,
+    help: bool,
+    version: bool,
+    positionals: Vec<OsString>,
+}
+
+fn parse_args(args: &[OsString]) -> Result<Parsed, String> {
     let mut opts = Options::default();
     let mut help = false;
     let mut version = false;
@@ -137,12 +125,12 @@ pub fn run_from_argv() -> ExitCode {
             "--debug" => opts.debug = true,
             "--lines" => {
                 let Some(value) = args.get(index) else {
-                    return usage("argument --lines: expected one argument");
+                    return Err("--lines: expected one argument".to_string());
                 };
                 index += 1;
                 let Some(lines) = parse_int(&value.to_string_lossy()) else {
-                    return usage(&format!(
-                        "argument --lines: invalid int value: '{}'",
+                    return Err(format!(
+                        "--lines: invalid int value: '{}'",
                         value.to_string_lossy()
                     ));
                 };
@@ -150,8 +138,8 @@ pub fn run_from_argv() -> ExitCode {
             }
             value if value.starts_with("--lines=") => {
                 let Some(lines) = parse_int(&value["--lines=".len()..]) else {
-                    return usage(&format!(
-                        "argument --lines: invalid int value: '{}'",
+                    return Err(format!(
+                        "--lines: invalid int value: '{}'",
                         &value["--lines=".len()..]
                     ));
                 };
@@ -159,7 +147,7 @@ pub fn run_from_argv() -> ExitCode {
             }
             "--label" | "-l" => {
                 let Some(value) = args.get(index) else {
-                    return usage("argument --label: expected one argument");
+                    return Err("--label: expected one argument".to_string());
                 };
                 index += 1;
                 opts.label = value.to_string_lossy().into_owned();
@@ -172,7 +160,7 @@ pub fn run_from_argv() -> ExitCode {
             }
             "--name" | "-n" => {
                 let Some(value) = args.get(index) else {
-                    return usage("argument --name: expected one argument");
+                    return Err("--name: expected one argument".to_string());
                 };
                 index += 1;
                 opts.name = value.to_string_lossy().into_owned();
@@ -184,11 +172,43 @@ pub fn run_from_argv() -> ExitCode {
                 opts.name = value[2..].to_string();
             }
             value if value.starts_with('-') && value != "-" => {
-                return usage(&format!("unrecognized arguments: {value}"));
+                return Err(format!("unrecognized arguments: {value}"));
             }
             _ => positionals.push(args[index - 1].clone()),
         }
     }
+    Ok(Parsed {
+        opts,
+        help,
+        version,
+        positionals,
+    })
+}
+
+pub fn run_from_argv() -> ExitCode {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == OsStr::new("tui")) {
+        let rest: Vec<String> = args[1..]
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        return match termux_sync_tui::main_entry("termux-sync tui", &rest) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("termux-sync tui: {error}");
+                ExitCode::from(1)
+            }
+        };
+    }
+    let Parsed {
+        mut opts,
+        help,
+        version,
+        positionals,
+    } = match parse_args(&args) {
+        Ok(parsed) => parsed,
+        Err(message) => return usage(&message),
+    };
 
     if opts.debug {
         let _ = port::set_debug(true);
@@ -222,9 +242,6 @@ pub fn run_from_argv() -> ExitCode {
         }
     }
 
-    if let Ok(cfg) = port::load_config() {
-        let _ = port::set_secrets(cfg);
-    }
     let needs_config = matches!(
         command.as_str(),
         "backup" | "restore" | "list" | "delete" | "status" | "daemon"
@@ -233,8 +250,14 @@ pub fn run_from_argv() -> ExitCode {
         command.as_str(),
         "setup" | "import-config" | "export-config" | "logs"
     );
+    // Load once: `set_secrets` needs it for redaction even when the command
+    // itself can tolerate a broken config.
+    let loaded = port::load_config();
+    if let Ok(cfg) = &loaded {
+        let _ = port::set_secrets(cfg.clone());
+    }
     let cfg = if needs_config || (opts.json_events && redaction_safe) {
-        match port::load_config() {
+        match loaded {
             Ok(cfg) => Some(cfg),
             Err(error) => return report_error(&error),
         }
@@ -244,27 +267,85 @@ pub fn run_from_argv() -> ExitCode {
     if opts.json_events {
         let _ = port::enable_event_mode(cfg.clone().unwrap_or_default());
     }
+    let cfg = cfg.unwrap_or_default();
 
     let result = match command.as_str() {
-        "backup" => port::cmd_backup(cfg.clone().unwrap_or_default(), opts.label.clone()),
-        "restore" => port::cmd_restore(cfg.clone().unwrap_or_default(), opts.name.clone()),
-        "list" => port::cmd_list(cfg.clone().unwrap_or_default()),
-        "delete" => port::cmd_delete(cfg.clone().unwrap_or_default(), opts.name.clone(), opts.yes),
+        "backup" => port::cmd_backup(cfg, opts.label),
+        "restore" => port::cmd_restore(cfg, opts.name),
+        "list" => port::cmd_list(cfg),
+        "delete" => port::cmd_delete(cfg, opts.name, opts.yes),
         "setup" => port::cmd_setup(),
         "schedule" => port::cmd_schedule(),
-        "daemon" => port::cmd_daemon(cfg.clone().unwrap_or_default()),
-        "export-config" => port::cmd_export_config(opts.target.clone()),
-        "import-config" => port::cmd_import_config(opts.target.clone()),
-        "status" => port::cmd_status(cfg.clone().unwrap_or_default()),
+        "daemon" => port::cmd_daemon(cfg),
+        "export-config" => port::cmd_export_config(opts.target),
+        "import-config" => port::cmd_import_config(opts.target),
+        "status" => port::cmd_status(cfg),
         "logs" => port::cmd_logs(opts.lines),
         "clear-logs" => port::cmd_clear_logs(opts.yes),
-        "check" => port::cmd_check(opts.target.clone()),
+        "check" => port::cmd_check(opts.target),
         "clear-cache" => port::cmd_clear_cache(opts.yes),
-        "help" => port::print_help(),
-        _ => Ok(serde_json::Value::Null),
+        _ => unreachable!("COMMANDS and dispatch are out of sync: {command}"),
     };
     match result {
         Ok(_) => ExitCode::SUCCESS,
         Err(error) => report_error(&error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<OsString> {
+        values.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn parse_int_accepts_the_full_i64_range() {
+        assert_eq!(parse_int("-9223372036854775808"), Some(i64::MIN));
+        assert_eq!(parse_int("+5"), Some(5));
+    }
+
+    #[test]
+    fn parse_int_accepts_underscores_like_python() {
+        assert_eq!(parse_int("1_000"), Some(1000));
+    }
+
+    #[test]
+    fn parse_int_rejects_garbage() {
+        assert_eq!(parse_int("x"), None);
+        assert_eq!(parse_int(""), None);
+        assert_eq!(parse_int("--1"), None);
+    }
+
+    #[test]
+    fn parse_args_reads_attached_and_separate_values() {
+        let parsed = parse_args(&args(&[
+            "--json-events",
+            "--lines=7",
+            "--label",
+            "nightly",
+            "-nbackup",
+            "list",
+        ]))
+        .expect("valid argv");
+        assert!(parsed.opts.json_events);
+        assert_eq!(parsed.opts.lines, 7);
+        assert_eq!(parsed.opts.label, "nightly");
+        assert_eq!(parsed.opts.name, "backup");
+        assert_eq!(parsed.positionals, args(&["list"]));
+    }
+
+    #[test]
+    fn parse_args_stops_flag_parsing_after_double_dash() {
+        let parsed = parse_args(&args(&["delete", "--", "--yes"])).expect("valid argv");
+        assert!(!parsed.opts.yes);
+        assert_eq!(parsed.positionals, args(&["delete", "--yes"]));
+    }
+
+    #[test]
+    fn parse_args_reports_the_legacy_lines_message() {
+        let error = parse_args(&args(&["logs", "--lines", "x"])).expect_err("bad int");
+        assert_eq!(error, "--lines: invalid int value: 'x'");
     }
 }
