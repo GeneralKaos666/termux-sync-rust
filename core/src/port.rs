@@ -18,9 +18,8 @@ use crate::core::{
 };
 
 /// Port of `log` (`src/termux_sync/__init__.py:131`).
-pub fn log(level: String, message: String) -> Result<Value, CoreError> {
-    logging::log(&level, &message);
-    Ok(Value::Null)
+pub fn log(level: &str, message: &str) {
+    logging::log(level, message);
 }
 
 /// Port of `load_config` (`src/termux_sync/__init__.py:160`).
@@ -35,33 +34,26 @@ pub fn save_config(cfg: Value) -> Result<Value, CoreError> {
 }
 
 /// Port of `event_stage` (`src/termux_sync/__init__.py:238`).
-pub fn event_stage(
-    stage_id: String,
-    label: String,
-    index: i64,
-    total: i64,
-    state: String,
-) -> Result<Value, CoreError> {
+pub fn event_stage(stage_id: &str, label: &str, index: i64, total: i64, state: &str) {
     events::emit(
         "stage",
         vec![
-            ("id", Value::String(stage_id)),
-            ("label", Value::String(label)),
-            ("state", Value::String(state)),
+            ("id", Value::String(stage_id.to_string())),
+            ("label", Value::String(label.to_string())),
+            ("state", Value::String(state.to_string())),
             ("index", Value::from(index)),
             ("total", Value::from(total)),
         ],
     );
-    Ok(Value::Null)
 }
 
 /// Port of `event_confirmation` (`src/termux_sync/__init__.py:358`).
-pub fn event_confirmation() -> Result<bool, CoreError> {
-    Ok(events::confirmation())
+pub fn event_confirmation() -> bool {
+    events::confirmation()
 }
 
 /// Port of `enable_event_mode` (`src/termux_sync/__init__.py:371`).
-pub fn enable_event_mode(cfg: Value) -> Result<Value, CoreError> {
+pub fn enable_event_mode(cfg: Value) {
     let secrets = ["github_token", "encrypt_password"]
         .iter()
         .filter_map(|key| cfg.get(*key))
@@ -69,11 +61,10 @@ pub fn enable_event_mode(cfg: Value) -> Result<Value, CoreError> {
         .filter(|secret| !secret.is_empty())
         .collect();
     events::enable(secrets);
-    Ok(Value::Null)
 }
 
 /// Store redaction secrets from a config without enabling event mode.
-pub fn set_secrets(cfg: Value) -> Result<Value, CoreError> {
+pub fn set_secrets(cfg: &Value) {
     let secrets = ["github_token", "encrypt_password"]
         .iter()
         .filter_map(|key| cfg.get(*key))
@@ -81,27 +72,19 @@ pub fn set_secrets(cfg: Value) -> Result<Value, CoreError> {
         .filter(|secret| !secret.is_empty())
         .collect();
     events::set_secrets(secrets);
-    Ok(Value::Null)
 }
 
-pub fn set_debug(enabled: bool) -> Result<Value, CoreError> {
+pub fn set_debug(enabled: bool) {
     maintenance::set_debug(enabled);
-    Ok(Value::Null)
 }
 
 /// Port of `print_error` (`src/termux_sync/__init__.py:391`).
-pub fn print_error(
-    title: String,
-    message: String,
-    hint: String,
-    r#where: String,
-) -> Result<Value, CoreError> {
-    render::print_error(&title, &message, &hint, &r#where);
-    Ok(Value::Null)
+pub fn print_error(title: &str, message: &str, hint: &str, r#where: &str) {
+    render::print_error(title, message, hint, r#where);
 }
 
 /// Port of `handle_crash` (`src/termux_sync/__init__.py:471`).
-pub fn handle_crash(exc: Value) -> Result<Value, CoreError> {
+pub fn handle_crash(exc: &Value) {
     let kind = exc
         .get("type")
         .map(text::py_str)
@@ -109,7 +92,7 @@ pub fn handle_crash(exc: Value) -> Result<Value, CoreError> {
     let message = exc
         .get("message")
         .map(text::py_str)
-        .unwrap_or_else(|| text::py_str(&exc));
+        .unwrap_or_else(|| text::py_str(exc));
     logging::log("ERROR", &format!("{kind}: {message}"));
     let error = CoreError::from_kind(&kind, message);
     let (title, body, hint) = errors::explain(&error);
@@ -122,56 +105,49 @@ pub fn handle_crash(exc: Value) -> Result<Value, CoreError> {
             ("exit_code", Value::from(1)),
         ],
     );
-    Ok(Value::Null)
 }
 
 /// Port of `print_banner` (`src/termux_sync/__init__.py:495`).
-pub fn print_banner() -> Result<Value, CoreError> {
+pub fn print_banner() {
     render::print_banner();
-    Ok(Value::Null)
 }
 
 /// Port of `note` (`src/termux_sync/__init__.py:516`).
-pub fn note(text: String, _style: String) -> Result<Value, CoreError> {
-    render::note(&text);
-    Ok(Value::Null)
+pub fn note(text: &str, _style: &str) {
+    render::note(text);
 }
 
 /// Port of `print_section` (`src/termux_sync/__init__.py:522`).
-pub fn print_section(title: String, subtitle: String) -> Result<Value, CoreError> {
-    render::print_section(&title, &subtitle);
-    Ok(Value::Null)
+pub fn print_section(title: &str, subtitle: &str) {
+    render::print_section(title, subtitle);
 }
 
 /// Port of `status_icon` (`src/termux_sync/__init__.py:530`).
-pub fn status_icon(ok: bool) -> Result<String, CoreError> {
-    Ok(fmt::status_icon(ok))
+pub fn status_icon(ok: bool) -> String {
+    fmt::status_icon(ok)
 }
 
 /// Port of `is_narrow` (`src/termux_sync/__init__.py:534`).
-pub fn is_narrow() -> Result<bool, CoreError> {
-    Ok(fmt::is_narrow())
+pub fn is_narrow() -> bool {
+    fmt::is_narrow()
 }
 
 /// Port of `make_progress` (`src/termux_sync/__init__.py:539`).
-pub fn make_progress(_transient: bool, _percent: bool) -> Result<Value, CoreError> {
-    Ok(Value::Null)
-}
+pub fn make_progress(_transient: bool, _percent: bool) {}
 
 /// Port of `fmt_elapsed` (`src/termux_sync/__init__.py:558`).
-pub fn fmt_elapsed(seconds: f64) -> Result<String, CoreError> {
-    Ok(fmt::fmt_elapsed(seconds))
+pub fn fmt_elapsed(seconds: f64) -> String {
+    fmt::fmt_elapsed(seconds)
 }
 
 /// Port of `print_backup_list` (`src/termux_sync/__init__.py:576`).
-pub fn print_backup_list(backups: Vec<Value>, title: String) -> Result<Value, CoreError> {
-    render::print_backup_list(&backups, &title);
-    Ok(Value::Null)
+pub fn print_backup_list(backups: &[Value], title: &str) {
+    render::print_backup_list(backups, title);
 }
 
 /// Port of `human_size` (`src/termux_sync/__init__.py:619`).
-pub fn human_size(size_bytes: i64) -> Result<String, CoreError> {
-    Ok(fmt::human_size(size_bytes))
+pub fn human_size(size_bytes: i64) -> String {
+    fmt::human_size(size_bytes)
 }
 
 /// Port of `sha256` (`src/termux_sync/__init__.py:628`).
@@ -203,8 +179,8 @@ pub fn get_installed_packages() -> Result<Vec<String>, CoreError> {
 }
 
 /// Port of `install_packages` (`src/termux_sync/__init__.py:685`).
-pub fn install_packages(pkg_list: Vec<String>, _console: Value) -> Result<Vec<String>, CoreError> {
-    Ok(packages::install(&pkg_list))
+pub fn install_packages(pkg_list: &[String], _console: Value) -> Vec<String> {
+    packages::install(pkg_list)
 }
 
 /// Port of `write_manifest` (`src/termux_sync/__init__.py:915`).
@@ -279,8 +255,8 @@ pub fn cmd_daemon(cfg: Value) -> Result<Value, CoreError> {
 }
 
 /// Port of `short_path` (`src/termux_sync/__init__.py:2726`).
-pub fn short_path(p: Value) -> Result<String, CoreError> {
-    Ok(fmt::short_path(&text::py_str(&p)))
+pub fn short_path(p: Value) -> String {
+    fmt::short_path(&text::py_str(&p))
 }
 
 /// Port of `cmd_status` (`src/termux_sync/__init__.py:2738`).
@@ -325,9 +301,8 @@ pub fn cmd_import_config(input_path: String) -> Result<Value, CoreError> {
 }
 
 /// Port of `print_help` (`src/termux_sync/__init__.py:3199`).
-pub fn print_help() -> Result<Value, CoreError> {
+pub fn print_help() {
     render::print_help();
-    Ok(Value::Null)
 }
 
 #[cfg(test)]

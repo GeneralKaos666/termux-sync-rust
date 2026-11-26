@@ -58,11 +58,11 @@ fn parse_int(raw: &str) -> Option<i64> {
 }
 
 fn usage(message: &str) -> ExitCode {
-    let _ = port::print_error(
-        "Invalid usage".to_string(),
-        message.to_string(),
-        "Run termux-sync help to see the correct usage.".to_string(),
-        String::new(),
+    port::print_error(
+        "Invalid usage",
+        message,
+        "Run termux-sync help to see the correct usage.",
+        "",
     );
     ExitCode::from(2)
 }
@@ -78,19 +78,16 @@ fn unknown(command: &str) -> ExitCode {
         "sync" => "Use termux-sync backup to upload, or termux-sync restore to download.",
         _ => "Run termux-sync help to see all commands.",
     };
-    let _ = port::print_error(
-        "Unknown command".to_string(),
-        format!("'{command}' is not a termux-sync command."),
-        format!("{hints}\nRun termux-sync help to see all commands."),
-        String::new(),
-    );
+    let message = format!("'{command}' is not a termux-sync command.");
+    let hint = format!("{hints}\nRun termux-sync help to see all commands.");
+    port::print_error("Unknown command", &message, &hint, "");
     ExitCode::from(2)
 }
 
 fn report_error(error: &CoreError) -> ExitCode {
-    let _ = port::log("ERROR".to_string(), error.to_string());
+    port::log("ERROR", &error.to_string());
     let (title, message, hint) = errors::explain(error);
-    let _ = port::print_error(title, message, hint, String::new());
+    port::print_error(&title, &message, &hint, "");
     ExitCode::from(1)
 }
 
@@ -211,14 +208,14 @@ pub fn run_from_argv() -> ExitCode {
     };
 
     if opts.debug {
-        let _ = port::set_debug(true);
+        port::set_debug(true);
     }
     if version {
         println!("termux-sync v{}", termux_sync_core::core::paths::VERSION);
         return ExitCode::SUCCESS;
     }
     if help || positionals.is_empty() || positionals[0] == OsStr::new("help") {
-        let _ = port::print_help();
+        port::print_help();
         return ExitCode::SUCCESS;
     }
     if positionals.len() > 2 {
@@ -254,7 +251,7 @@ pub fn run_from_argv() -> ExitCode {
     // itself can tolerate a broken config.
     let loaded = port::load_config();
     if let Ok(cfg) = &loaded {
-        let _ = port::set_secrets(cfg.clone());
+        port::set_secrets(cfg);
     }
     let cfg = if needs_config || (opts.json_events && redaction_safe) {
         match loaded {
@@ -265,7 +262,7 @@ pub fn run_from_argv() -> ExitCode {
         None
     };
     if opts.json_events {
-        let _ = port::enable_event_mode(cfg.clone().unwrap_or_default());
+        port::enable_event_mode(cfg.clone().unwrap_or_default());
     }
     let cfg = cfg.unwrap_or_default();
 
