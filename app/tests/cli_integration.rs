@@ -124,13 +124,12 @@ impl Fixture {
             command.env(key, value);
         }
         let mut child = command.spawn().unwrap();
-        if let Some(input) = stdin {
-            child
-                .stdin
-                .as_mut()
-                .unwrap()
-                .write_all(input.as_bytes())
-                .unwrap();
+        if let Some(input) = stdin
+            && let Some(mut pipe) = child.stdin.take()
+        {
+            // A command that never reads stdin closes the pipe early; EPIPE is
+            // expected here and must not panic the test.
+            let _ = pipe.write_all(input.as_bytes());
         }
         child.wait_with_output().unwrap()
     }
