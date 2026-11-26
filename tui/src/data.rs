@@ -244,6 +244,15 @@ pub fn is_safe_backup_name(name: &str) -> bool {
         && !name.contains('\\')
 }
 
+/// Timestamp shown in tables: controls removed, date and time, `T` -> space.
+pub fn normalize_date(text: &str) -> String {
+    strip_controls(text)
+        .chars()
+        .take(16)
+        .collect::<String>()
+        .replace('T', " ")
+}
+
 pub fn strip_controls(text: &str) -> Cow<'_, str> {
     if !text
         .chars()
@@ -270,11 +279,7 @@ pub fn parse_manifest(value: &Value) -> Option<Backup> {
         .map(strip_controls)
         .unwrap_or_default()
         .into_owned();
-    let date = strip_controls(value.get("date").and_then(Value::as_str).unwrap_or("—"))
-        .chars()
-        .take(16)
-        .collect::<String>()
-        .replace('T', " ");
+    let date = normalize_date(value.get("date").and_then(Value::as_str).unwrap_or("—"));
     let packages = value
         .get("packages")
         .and_then(Value::as_array)

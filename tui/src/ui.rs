@@ -342,7 +342,7 @@ fn render_operation(frame: &mut Frame, area: Rect, app: &App, operation: &Operat
     .areas(area);
 
     render_operation_header(frame, header, operation);
-    render_operation_stages(frame, stages, operation);
+    render_operation_stages(frame, stages, operation, app.ascii);
     if operation.status == Status::AwaitingConfirm && operation.diff_open {
         render_package_diff(frame, body, operation);
     } else {
@@ -431,7 +431,7 @@ fn render_operation_header(frame: &mut Frame, area: Rect, operation: &Operation)
     );
 }
 
-fn render_operation_stages(frame: &mut Frame, area: Rect, operation: &Operation) {
+fn render_operation_stages(frame: &mut Frame, area: Rect, operation: &Operation, ascii: bool) {
     if area.width < 80 {
         let position = operation
             .current_stage
@@ -467,7 +467,7 @@ fn render_operation_stages(frame: &mut Frame, area: Rect, operation: &Operation)
         if index > 0 {
             spans.push(Span::raw("   "));
         }
-        let (symbol, color) = stage_symbol(stage.state);
+        let (symbol, color) = stage_symbol(stage.state, ascii);
         let style = if stage.state == StageState::Active {
             fg(color).bold()
         } else {
@@ -591,13 +591,7 @@ fn render_restore_plan(frame: &mut Frame, area: Rect, operation: &Operation) {
         ]));
         lines.push(Line::from(vec![
             Span::styled(" Date     ", fg(MUTED)),
-            Span::raw(
-                plan.date
-                    .replace('T', " ")
-                    .chars()
-                    .take(16)
-                    .collect::<String>(),
-            ),
+            Span::raw(crate::data::normalize_date(&plan.date)),
             Span::styled("   Label ", fg(MUTED)),
             Span::raw(if plan.label.is_empty() {
                 "—".to_string()
@@ -1033,13 +1027,18 @@ fn op_block(title: &str, color: Color) -> Block<'static> {
         .padding(Padding::horizontal(1))
 }
 
-fn stage_symbol(state: StageState) -> (&'static str, Color) {
-    match state {
-        StageState::Pending => ("·", MUTED),
-        StageState::Active => ("▸", ACCENT),
-        StageState::Complete => ("✓", SUCCESS),
-        StageState::Failed => ("✕", DANGER),
-        StageState::Skipped => ("–", MUTED),
+fn stage_symbol(state: StageState, ascii: bool) -> (&'static str, Color) {
+    match (state, ascii) {
+        (StageState::Pending, false) => ("·", MUTED),
+        (StageState::Active, false) => ("▸", ACCENT),
+        (StageState::Complete, false) => ("✓", SUCCESS),
+        (StageState::Failed, false) => ("✕", DANGER),
+        (StageState::Skipped, false) => ("–", MUTED),
+        (StageState::Pending, true) => (".", MUTED),
+        (StageState::Active, true) => (">", ACCENT),
+        (StageState::Complete, true) => ("v", SUCCESS),
+        (StageState::Failed, true) => ("x", DANGER),
+        (StageState::Skipped, true) => ("-", MUTED),
     }
 }
 
