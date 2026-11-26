@@ -229,7 +229,7 @@ pub fn list(cfg: &Value) -> Result<Value, CoreError> {
         ),
     );
     let backups: Vec<Value> = storage
-        .list_backups()
+        .list_backups()?
         .into_iter()
         .filter(|backup| manifest::manifest_shape(backup, false))
         .collect();

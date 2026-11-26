@@ -63,20 +63,22 @@ impl RcloneStorage {
         if output.status.success() {
             return Ok(output);
         }
-        let code = output.status.code().unwrap_or(1);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr = stderr.trim();
-        if stderr.is_empty() {
-            return Err(CoreError::runtime(format!("rclone exited with {code}")));
+        Err(command_error(&output))
+    }
+
+    /// Run `rclone cat`, treating a missing file as `Ok(None)`.
+    fn cat_optional(&self, remote: &str) -> Result<Option<Vec<u8>>, CoreError> {
+        let output = Command::new(&self.binary)
+            .args(["cat", remote])
+            .output()
+            .map_err(|error| CoreError::runtime(format!("rclone failed: {error}")))?;
+        if output.status.success() {
+            return Ok(Some(output.stdout));
         }
-        let mut chars = stderr.chars();
-        let mut detail: String = chars.by_ref().take(497).collect();
-        if chars.next().is_some() {
-            detail.push_str("...");
+        if matches!(output.status.code(), Some(3 | 4)) {
+            return Ok(None);
         }
-        Err(CoreError::runtime(format!(
-            "rclone exited with {code}: {detail}"
-        )))
+        Err(command_error(&output))
     }
 
     pub fn upload(&self, backup_dir: &Path, backup_name: &str) -> Result<String, CoreError> {
@@ -101,26 +103,29 @@ impl RcloneStorage {
         Ok(remote)
     }
 
-    pub fn fetch_manifest(&self, backup_name: &str) -> Option<Value> {
+    pub fn fetch_manifest(&self, backup_name: &str) -> Result<Option<Value>, CoreError> {
         let name = manifest::clean_backup_name(backup_name);
         if name.is_empty() {
-            return None;
+            return Ok(None);
         }
-        let output = self
-            .run(&["cat", &self.remote_path(&format!("{name}/manifest.json"))])
-            .ok()?;
-        serde_json::from_slice(&output.stdout).ok()
+        let Some(stdout) =
+            self.cat_optional(&self.remote_path(&format!("{name}/manifest.json")))?
+        else {
+            return Ok(None);
+        };
+        match serde_json::from_slice(&stdout) {
+            Ok(value) => Ok(Some(value)),
+            Err(_) => Ok(None),
+        }
     }
 
-    pub fn list_backups(&self) -> Vec<Value> {
-        let Ok(output) = self.run(&["lsjson", &self.remote_path(""), "--dirs-only"]) else {
-            return Vec::new();
-        };
-        let Ok(items) = serde_json::from_slice::<Value>(&output.stdout) else {
-            return Vec::new();
-        };
+    pub fn list_backups(&self) -> Result<Vec<Value>, CoreError> {
+        let output = self.run(&["lsjson", &self.remote_path(""), "--dirs-only"])?;
+        let items: Value = serde_json::from_slice(&output.stdout).map_err(CoreError::runtime)?;
         let Some(items) = items.as_array() else {
-            return Vec::new();
+            return Err(CoreError::runtime(
+                "rclone lsjson response was not an array",
+            ));
         };
         let mut sorted = items.clone();
         sorted.sort_by(|left, right| {
@@ -128,25 +133,24 @@ impl RcloneStorage {
             let right = right.get("ModTime").map(text::py_str).unwrap_or_default();
             right.cmp(&left)
         });
-        sorted
-            .into_iter()
-            .filter_map(|item| {
-                let name = item.get("Name").map(text::py_str).unwrap_or_default();
-                let output = self
-                    .run(&["cat", &self.remote_path(&format!("{name}/manifest.json"))])
-                    .ok()?;
-                if output.status.success()
-                    && let Ok(value) = serde_json::from_slice(&output.stdout)
-                {
-                    Some(value)
-                } else {
-                    Some(serde_json::json!({
-                        "name": name,
-                        "date": item.get("ModTime").map(text::py_str).unwrap_or_default(),
-                    }))
-                }
-            })
-            .collect()
+        let mut backups = Vec::new();
+        for item in sorted {
+            let name = item.get("Name").map(text::py_str).unwrap_or_default();
+            let Some(stdout) =
+                self.cat_optional(&self.remote_path(&format!("{name}/manifest.json")))?
+            else {
+                continue;
+            };
+            let value = match serde_json::from_slice(&stdout) {
+                Ok(value) => value,
+                Err(_) => serde_json::json!({
+                    "name": name,
+                    "date": item.get("ModTime").map(text::py_str).unwrap_or_default(),
+                }),
+            };
+            backups.push(value);
+        }
+        Ok(backups)
     }
 
     pub fn download(&self, backup_name: &str, dest: &Path) -> Result<(), CoreError> {
@@ -172,15 +176,9 @@ impl RcloneStorage {
     }
 
     pub fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
-        let Ok(output) = self.run(&["lsjson", &self.remote_path(""), "--dirs-only"]) else {
-            return Ok(());
-        };
-        let Ok(items) = serde_json::from_slice::<Value>(&output.stdout) else {
-            return Ok(());
-        };
-        let Some(items) = items.as_array() else {
-            return Ok(());
-        };
+        let output = self.run(&["lsjson", &self.remote_path(""), "--dirs-only"])?;
+        let items: Vec<Value> = serde_json::from_slice(&output.stdout)
+            .map_err(|error| CoreError::plain(error.to_string()))?;
         let mut sorted: Vec<&Value> = items
             .iter()
             .filter(|item| {
@@ -220,6 +218,21 @@ impl RcloneStorage {
             })?;
         Ok(())
     }
+}
+
+fn command_error(output: &std::process::Output) -> CoreError {
+    let code = output.status.code().unwrap_or(1);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        return CoreError::runtime(format!("rclone exited with {code}"));
+    }
+    let mut chars = stderr.chars();
+    let mut detail: String = chars.by_ref().take(497).collect();
+    if chars.next().is_some() {
+        detail.push_str("...");
+    }
+    CoreError::runtime(format!("rclone exited with {code}: {detail}"))
 }
 
 fn valid_folder_id(value: &str) -> bool {
@@ -374,6 +387,40 @@ exit 1
     }
 
     #[test]
+    fn list_backups_propagates_a_failed_lsjson() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = script_storage(
+            &temp,
+            r#"#!/bin/sh
+case "$1" in
+  lsjson) printf 'remote unreachable' >&2; exit 1;;
+esac
+"#,
+        );
+        let error = storage.list_backups().unwrap_err();
+        assert!(error.contains("remote unreachable"), "{error}");
+    }
+
+    #[test]
+    fn fetch_manifest_treats_a_missing_file_as_none() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = script_storage(
+            &temp,
+            r#"#!/bin/sh
+case "$1" in
+  cat) exit 4;;
+esac
+"#,
+        );
+        assert!(
+            storage
+                .fetch_manifest("termux_backup_20250101_120000")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn new_rejects_bad_folder_id() {
         let cfg = serde_json::json!({"gdrive_folder_id": "/root"});
         let Err(error) = RcloneStorage::new(&cfg) else {
@@ -392,9 +439,10 @@ exit 1
         assert!(
             storage
                 .fetch_manifest("termux_backup_20250101_120000")
+                .unwrap()
                 .is_some()
         );
-        assert_eq!(storage.list_backups().len(), 1);
+        assert_eq!(storage.list_backups().unwrap().len(), 1);
         let dest = temp.path().join("dest");
         storage
             .download("termux_backup_20250101_120000", &dest)

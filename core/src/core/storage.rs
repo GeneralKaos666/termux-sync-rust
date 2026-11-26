@@ -112,23 +112,22 @@ impl LocalStorage {
         read_manifest(&dir)
     }
 
-    pub fn list_backups(&self) -> Vec<Value> {
+    pub fn list_backups(&self) -> Result<Vec<Value>, CoreError> {
         if !self.root.exists() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        let Ok(entries) = fs::read_dir(&self.root) else {
-            return Vec::new();
-        };
-        let mut dirs: Vec<PathBuf> = entries
+        let mut dirs: Vec<PathBuf> = fs::read_dir(&self.root)
+            .map_err(CoreError::os)?
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| path.is_dir())
             .collect();
         dirs.sort_by(|left, right| right.cmp(left));
-        dirs.into_iter()
+        Ok(dirs
+            .into_iter()
             .filter_map(|dir| read_manifest(&dir).ok().flatten())
             .filter(|manifest| manifest::manifest_shape(manifest, false))
-            .collect()
+            .collect())
     }
 
     pub fn download(&self, backup_name: &str, dest: &Path) -> Result<(), CoreError> {
@@ -384,7 +383,7 @@ impl Storage {
         }
     }
 
-    pub fn list_backups(&self) -> Vec<Value> {
+    pub fn list_backups(&self) -> Result<Vec<Value>, CoreError> {
         match self {
             Self::Local(local) => local.list_backups(),
             Self::Rclone(rclone) => rclone.list_backups(),
@@ -395,8 +394,8 @@ impl Storage {
     pub fn fetch_manifest(&self, name: &str) -> Result<Option<Value>, CoreError> {
         match self {
             Self::Local(local) => local.fetch_manifest(name),
-            Self::Rclone(rclone) => Ok(rclone.fetch_manifest(name)),
-            Self::GitHub(github) => Ok(github.fetch_manifest(name)),
+            Self::Rclone(rclone) => rclone.fetch_manifest(name),
+            Self::GitHub(github) => github.fetch_manifest(name),
         }
     }
 
@@ -471,7 +470,7 @@ mod tests {
             .unwrap();
         assert!(Path::new(&uploaded.location).join("home.tar.gz").is_file());
         assert_eq!(uploaded.checksums.len(), 2);
-        let backups = local.list_backups();
+        let backups = local.list_backups().unwrap();
         assert_eq!(backups.len(), 1);
         assert_eq!(backups[0]["name"], manifest["name"]);
         let files = manifest.get("files").unwrap();
@@ -482,9 +481,18 @@ mod tests {
         local
             .upload(&second, "termux_backup_20250101_130000")
             .unwrap();
-        assert_eq!(local.list_backups().len(), 2);
+        assert_eq!(local.list_backups().unwrap().len(), 2);
         local.delete_old(1).unwrap();
-        assert_eq!(local.list_backups().len(), 1);
+        assert_eq!(local.list_backups().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn local_list_of_missing_root_is_empty_ok() {
+        let temp = tempfile::tempdir().unwrap();
+        let local = LocalStorage {
+            root: temp.path().join("missing"),
+        };
+        assert!(local.list_backups().unwrap().is_empty());
     }
 
     #[test]

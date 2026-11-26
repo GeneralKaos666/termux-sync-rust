@@ -58,7 +58,7 @@ pub fn delete(cfg: &Value, backup_name: &str, assume_yes: bool) -> Result<Value,
         ),
     );
     let storage = Storage::from_config(cfg)?;
-    let backups = storage.list_backups();
+    let backups = storage.list_backups()?;
     if backups.is_empty() {
         render::print_line("  No backups found.");
         if !backup_name.is_empty() {

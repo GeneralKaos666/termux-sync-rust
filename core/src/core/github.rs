@@ -574,17 +574,15 @@ impl GitHubStorage {
         let _ = self.delete_backup(backup_name);
     }
 
-    pub fn fetch_manifest(&self, backup_name: &str) -> Option<Value> {
+    pub fn fetch_manifest(&self, backup_name: &str) -> Result<Option<Value>, CoreError> {
         let name = manifest::clean_backup_name(backup_name);
-        self.list_backups().into_iter().find(|manifest| {
+        Ok(self.list_backups()?.into_iter().find(|manifest| {
             manifest.get("name").map(text::py_str).as_deref() == Some(name.as_str())
-        })
+        }))
     }
 
-    pub fn list_backups(&self) -> Vec<Value> {
-        let Ok(releases) = self.list_releases() else {
-            return Vec::new();
-        };
+    pub fn list_backups(&self) -> Result<Vec<Value>, CoreError> {
+        let releases = self.list_releases()?;
         let mut backups = Vec::new();
         for release in releases {
             let tag = release
@@ -615,7 +613,7 @@ impl GitHubStorage {
                 })
             }));
         }
-        backups
+        Ok(backups)
     }
 
     fn download_asset_value(&self, asset_id: i64) -> Result<Value, CoreError> {
