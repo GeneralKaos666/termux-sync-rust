@@ -376,65 +376,126 @@ impl Storage {
         }
     }
 
-    pub fn preflight(&self) -> Result<(), CoreError> {
+    fn backend(&self) -> &dyn Backend {
         match self {
-            Self::Local(_) | Self::Rclone(_) => Ok(()),
-            Self::GitHub(github) => github.preflight(),
+            Self::Local(local) => local,
+            Self::Rclone(rclone) => rclone,
+            Self::GitHub(github) => github,
         }
+    }
+
+    pub fn preflight(&self) -> Result<(), CoreError> {
+        self.backend().preflight()
     }
 
     pub fn list_backups(&self) -> Result<Vec<Value>, CoreError> {
-        match self {
-            Self::Local(local) => local.list_backups(),
-            Self::Rclone(rclone) => rclone.list_backups(),
-            Self::GitHub(github) => github.list_backups(),
-        }
+        self.backend().list_backups()
     }
 
     pub fn fetch_manifest(&self, name: &str) -> Result<Option<Value>, CoreError> {
-        match self {
-            Self::Local(local) => local.fetch_manifest(name),
-            Self::Rclone(rclone) => rclone.fetch_manifest(name),
-            Self::GitHub(github) => github.fetch_manifest(name),
-        }
+        self.backend().fetch_manifest(name)
     }
 
     pub fn download(&self, name: &str, dest: &Path) -> Result<(), CoreError> {
-        match self {
-            Self::Local(local) => local.download(name, dest),
-            Self::Rclone(rclone) => rclone.download(name, dest),
-            Self::GitHub(github) => github.download(name, dest),
-        }
+        self.backend().download(name, dest)
     }
 
     pub fn upload(&self, dir: &Path, name: &str) -> Result<UploadResult, CoreError> {
-        match self {
-            Self::Local(local) => local.upload(dir, name),
-            Self::Rclone(rclone) => rclone.upload(dir, name).map(|location| UploadResult {
-                location,
-                checksums: Vec::new(),
-            }),
-            Self::GitHub(github) => github.upload(dir, name).map(|location| UploadResult {
-                location,
-                checksums: Vec::new(),
-            }),
-        }
+        self.backend().upload(dir, name)
     }
 
     pub fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
-        match self {
-            Self::Local(local) => local.delete_old(max_keep),
-            Self::Rclone(rclone) => rclone.delete_old(max_keep),
-            Self::GitHub(github) => github.delete_old(max_keep),
-        }
+        self.backend().delete_old(max_keep)
     }
 
     pub fn delete_backup(&self, name: &str) -> Result<(), CoreError> {
-        match self {
-            Self::Local(local) => local.delete_backup(name),
-            Self::Rclone(rclone) => rclone.delete_backup(name),
-            Self::GitHub(github) => github.delete_backup(name),
-        }
+        self.backend().delete_backup(name)
+    }
+}
+
+/// Operations every storage backend provides. `Storage` erases the concrete
+/// backend behind this trait so each command is dispatched once, not per method.
+pub trait Backend {
+    fn preflight(&self) -> Result<(), CoreError> {
+        Ok(())
+    }
+    fn list_backups(&self) -> Result<Vec<Value>, CoreError>;
+    fn fetch_manifest(&self, name: &str) -> Result<Option<Value>, CoreError>;
+    fn download(&self, name: &str, dest: &Path) -> Result<(), CoreError>;
+    fn upload(&self, dir: &Path, name: &str) -> Result<UploadResult, CoreError>;
+    fn delete_old(&self, max_keep: i64) -> Result<(), CoreError>;
+    fn delete_backup(&self, name: &str) -> Result<(), CoreError>;
+}
+
+impl Backend for LocalStorage {
+    fn list_backups(&self) -> Result<Vec<Value>, CoreError> {
+        LocalStorage::list_backups(self)
+    }
+    fn fetch_manifest(&self, name: &str) -> Result<Option<Value>, CoreError> {
+        LocalStorage::fetch_manifest(self, name)
+    }
+    fn download(&self, name: &str, dest: &Path) -> Result<(), CoreError> {
+        LocalStorage::download(self, name, dest)
+    }
+    fn upload(&self, dir: &Path, name: &str) -> Result<UploadResult, CoreError> {
+        LocalStorage::upload(self, dir, name)
+    }
+    fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
+        LocalStorage::delete_old(self, max_keep)
+    }
+    fn delete_backup(&self, name: &str) -> Result<(), CoreError> {
+        LocalStorage::delete_backup(self, name)
+    }
+}
+
+impl Backend for RcloneStorage {
+    fn list_backups(&self) -> Result<Vec<Value>, CoreError> {
+        RcloneStorage::list_backups(self)
+    }
+    fn fetch_manifest(&self, name: &str) -> Result<Option<Value>, CoreError> {
+        RcloneStorage::fetch_manifest(self, name)
+    }
+    fn download(&self, name: &str, dest: &Path) -> Result<(), CoreError> {
+        RcloneStorage::download(self, name, dest)
+    }
+    fn upload(&self, dir: &Path, name: &str) -> Result<UploadResult, CoreError> {
+        RcloneStorage::upload(self, dir, name).map(|location| UploadResult {
+            location,
+            checksums: Vec::new(),
+        })
+    }
+    fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
+        RcloneStorage::delete_old(self, max_keep)
+    }
+    fn delete_backup(&self, name: &str) -> Result<(), CoreError> {
+        RcloneStorage::delete_backup(self, name)
+    }
+}
+
+impl Backend for GitHubStorage {
+    fn preflight(&self) -> Result<(), CoreError> {
+        GitHubStorage::preflight(self)
+    }
+    fn list_backups(&self) -> Result<Vec<Value>, CoreError> {
+        GitHubStorage::list_backups(self)
+    }
+    fn fetch_manifest(&self, name: &str) -> Result<Option<Value>, CoreError> {
+        GitHubStorage::fetch_manifest(self, name)
+    }
+    fn download(&self, name: &str, dest: &Path) -> Result<(), CoreError> {
+        GitHubStorage::download(self, name, dest)
+    }
+    fn upload(&self, dir: &Path, name: &str) -> Result<UploadResult, CoreError> {
+        GitHubStorage::upload(self, dir, name).map(|location| UploadResult {
+            location,
+            checksums: Vec::new(),
+        })
+    }
+    fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
+        GitHubStorage::delete_old(self, max_keep)
+    }
+    fn delete_backup(&self, name: &str) -> Result<(), CoreError> {
+        GitHubStorage::delete_backup(self, name)
     }
 }
 
