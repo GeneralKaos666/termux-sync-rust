@@ -7,6 +7,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
+use crate::core::errors::CoreError;
 use crate::core::events;
 use crate::core::manifest;
 use crate::core::text;
@@ -20,21 +21,20 @@ pub struct RcloneStorage {
 impl RcloneStorage {
     pub const REMOTE: &'static str = "termux-sync-gdrive";
 
-    pub fn new(cfg: &Value) -> Result<Self, String> {
+    pub fn new(cfg: &Value) -> Result<Self, CoreError> {
         let folder_id = cfg
             .get("gdrive_folder_id")
             .map(text::py_str)
             .unwrap_or_default();
         if !valid_folder_id(&folder_id) {
-            return Err(format!(
-                "termux_sync.UserError: Invalid Google Drive folder ID: {folder_id:?}"
-            ));
+            return Err(CoreError::user(format!(
+                "Invalid Google Drive folder ID: {folder_id:?}"
+            )));
         }
         if find_in_path("rclone").is_none() {
-            return Err(
-                "termux_sync.UserError: rclone not found: Google Drive storage needs rclone"
-                    .to_string(),
-            );
+            return Err(CoreError::user(
+                "rclone not found: Google Drive storage needs rclone",
+            ));
         }
         Ok(Self {
             folder_id,
@@ -55,11 +55,11 @@ impl RcloneStorage {
         }
     }
 
-    fn run(&self, args: &[&str]) -> Result<std::process::Output, String> {
+    fn run(&self, args: &[&str]) -> Result<std::process::Output, CoreError> {
         let output = Command::new(&self.binary)
             .args(args)
             .output()
-            .map_err(|error| format!("RuntimeError: rclone failed: {error}"))?;
+            .map_err(|error| CoreError::runtime(format!("rclone failed: {error}")))?;
         if output.status.success() {
             return Ok(output);
         }
@@ -67,17 +67,19 @@ impl RcloneStorage {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr = stderr.trim();
         if stderr.is_empty() {
-            return Err(format!("RuntimeError: rclone exited with {code}"));
+            return Err(CoreError::runtime(format!("rclone exited with {code}")));
         }
         let mut chars = stderr.chars();
         let mut detail: String = chars.by_ref().take(497).collect();
         if chars.next().is_some() {
             detail.push_str("...");
         }
-        Err(format!("RuntimeError: rclone exited with {code}: {detail}"))
+        Err(CoreError::runtime(format!(
+            "rclone exited with {code}: {detail}"
+        )))
     }
 
-    pub fn upload(&self, backup_dir: &Path, backup_name: &str) -> Result<String, String> {
+    pub fn upload(&self, backup_dir: &Path, backup_name: &str) -> Result<String, CoreError> {
         let remote = self.remote_path(backup_name);
         self.run(&[
             "copy",
@@ -147,8 +149,8 @@ impl RcloneStorage {
             .collect()
     }
 
-    pub fn download(&self, backup_name: &str, dest: &Path) -> Result<(), String> {
-        fs::create_dir_all(dest).map_err(|error| format!("OSError: {error}"))?;
+    pub fn download(&self, backup_name: &str, dest: &Path) -> Result<(), CoreError> {
+        fs::create_dir_all(dest).map_err(CoreError::os)?;
         self.run(&[
             "copy",
             &self.remote_path(backup_name),
@@ -169,7 +171,7 @@ impl RcloneStorage {
         Ok(())
     }
 
-    pub fn delete_old(&self, max_keep: i64) -> Result<(), String> {
+    pub fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
         let Ok(output) = self.run(&["lsjson", &self.remote_path(""), "--dirs-only"]) else {
             return Ok(());
         };
@@ -208,13 +210,13 @@ impl RcloneStorage {
         }
     }
 
-    pub fn delete_backup(&self, backup_name: &str) -> Result<(), String> {
+    pub fn delete_backup(&self, backup_name: &str) -> Result<(), CoreError> {
         self.run(&["purge", &self.remote_path(backup_name)])
             .map_err(|error| {
-                format!(
-                    "RuntimeError: Failed to delete backup from Google Drive: {}",
-                    error.trim_start_matches("RuntimeError: ")
-                )
+                CoreError::runtime(format!(
+                    "Failed to delete backup from Google Drive: {}",
+                    error.message()
+                ))
             })?;
         Ok(())
     }
@@ -366,8 +368,9 @@ exit 1
 "#,
         );
         let error = storage.run(&["lsjson", "remote:"]).unwrap_err();
-        assert!(error.ends_with("..."), "{error}");
-        assert!(error.len() < 560, "{} characters", error.len());
+        let text = error.to_string();
+        assert!(text.ends_with("..."), "{text}");
+        assert!(text.len() < 560, "{} characters", text.len());
     }
 
     #[test]
@@ -376,9 +379,10 @@ exit 1
         let Err(error) = RcloneStorage::new(&cfg) else {
             panic!("expected an error for a folder ID with a leading slash");
         };
+        let text = error.to_string();
         assert!(
-            error.starts_with("termux_sync.UserError: Invalid Google Drive folder ID"),
-            "{error}"
+            text.starts_with("termux_sync.UserError: Invalid Google Drive folder ID"),
+            "{text}"
         );
     }
 

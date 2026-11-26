@@ -6,6 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use serde_json::{Map, Value};
 
+use crate::core::errors::CoreError;
 use crate::core::fmt;
 use crate::core::json;
 use crate::core::paths;
@@ -60,29 +61,31 @@ pub fn default_config() -> Map<String, Value> {
     map
 }
 
-pub fn load_config() -> Result<Value, String> {
+pub fn load_config() -> Result<Value, CoreError> {
     let dir = paths::config_dir();
-    fs::create_dir_all(&dir).map_err(|error| format!("OSError: {error}"))?;
+    fs::create_dir_all(&dir).map_err(CoreError::os)?;
     let file = paths::config_file();
     if !file.exists() {
         return Ok(Value::Object(default_config()));
     }
-    let bytes = fs::read(&file).map_err(|error| format!("OSError: {error}"))?;
+    let bytes = fs::read(&file).map_err(CoreError::os)?;
     let bytes = json::strip_utf8_bom(&bytes);
     let mut data: Value = serde_json::from_slice(bytes).map_err(|error| {
         let mut column = error.column();
         if column == 0 {
             column = 1;
         }
-        format!(
-            "termux_sync.UserError: The config file is not valid JSON (line {}, column {}).\nFile: {}",
+        CoreError::user(format!(
+            "The config file is not valid JSON (line {}, column {}).\nFile: {}",
             error.line(),
             column,
             file.display()
-        )
+        ))
     })?;
     let Value::Object(ref mut map) = data else {
-        return Err("AttributeError: config.json must contain a JSON object".to_string());
+        return Err(CoreError::attribute(
+            "config.json must contain a JSON object",
+        ));
     };
     for (key, value) in default_config() {
         map.entry(key).or_insert(value);
@@ -90,11 +93,11 @@ pub fn load_config() -> Result<Value, String> {
     Ok(data)
 }
 
-fn patch_error(detail: &str) -> String {
-    format!("termux_sync.UserError: Invalid config: {detail}")
+fn patch_error(detail: &str) -> CoreError {
+    CoreError::user(format!("Invalid config: {detail}"))
 }
 
-fn require_string(key: &str, value: &Value) -> Result<(), String> {
+fn require_string(key: &str, value: &Value) -> Result<(), CoreError> {
     if value.is_string() {
         Ok(())
     } else {
@@ -105,7 +108,7 @@ fn require_string(key: &str, value: &Value) -> Result<(), String> {
 /// Validate an imported config patch. Accepts only known keys, each with its own
 /// rule. Unknown keys are rejected so a stale or hostile export cannot smuggle
 /// settings in.
-pub fn validate_patch(value: &Value) -> Result<(), String> {
+pub fn validate_patch(value: &Value) -> Result<(), CoreError> {
     let Value::Object(map) = value else {
         return Err(patch_error("config must be a JSON object"));
     };
@@ -215,9 +218,9 @@ pub fn retention_limit(cfg: &Value) -> i64 {
         .max(1)
 }
 
-pub fn save_config(value: &Value) -> Result<(), String> {
+pub fn save_config(value: &Value) -> Result<(), CoreError> {
     let dir = paths::config_dir();
-    fs::create_dir_all(&dir).map_err(|error| format!("OSError: {error}"))?;
+    fs::create_dir_all(&dir).map_err(CoreError::os)?;
     let file = paths::config_file();
     let text = json::to_string_pretty_ascii(value)?;
     let mut handle = OpenOptions::new()
@@ -226,11 +229,9 @@ pub fn save_config(value: &Value) -> Result<(), String> {
         .truncate(true)
         .mode(0o600)
         .open(&file)
-        .map_err(|error| format!("OSError: {error}"))?;
+        .map_err(CoreError::os)?;
     use std::io::Write;
-    handle
-        .write_all(text.as_bytes())
-        .map_err(|error| format!("OSError: {error}"))?;
+    handle.write_all(text.as_bytes()).map_err(CoreError::os)?;
     let _ = fs::set_permissions(&file, fs::Permissions::from_mode(0o600));
     Ok(())
 }

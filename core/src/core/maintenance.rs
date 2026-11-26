@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 
 use crate::core::backup;
 use crate::core::config;
+use crate::core::errors::CoreError;
 use crate::core::fmt;
 use crate::core::fsutil;
 use crate::core::json as pyjson;
@@ -48,7 +49,7 @@ fn map_string(map: &Map<String, Value>, key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
-pub fn delete(cfg: &Value, backup_name: &str, assume_yes: bool) -> Result<Value, String> {
+pub fn delete(cfg: &Value, backup_name: &str, assume_yes: bool) -> Result<Value, CoreError> {
     render::print_section(
         "DELETE BACKUP",
         &format!(
@@ -61,9 +62,9 @@ pub fn delete(cfg: &Value, backup_name: &str, assume_yes: bool) -> Result<Value,
     if backups.is_empty() {
         render::print_line("  No backups found.");
         if !backup_name.is_empty() {
-            return Err(format!(
-                "FileNotFoundError: Backup not found: {backup_name}"
-            ));
+            return Err(CoreError::file_not_found(format!(
+                "Backup not found: {backup_name}"
+            )));
         }
         return Ok(Value::Null);
     }
@@ -102,25 +103,18 @@ pub fn delete(cfg: &Value, backup_name: &str, assume_yes: bool) -> Result<Value,
             logging::log("INFO", &format!("Deleted backup: {cleaned}"));
         }
         Err(error) => {
-            let shown = [
-                "FileNotFoundError: ",
-                "UserError: ",
-                "RuntimeError: ",
-                "ValueError: ",
-                "OSError: ",
-            ]
-            .iter()
-            .find_map(|prefix| error.strip_prefix(prefix))
-            .unwrap_or(&error);
-            render::print_line(&format!("  ✗ Failed to delete backup: {shown}"));
-            logging::log("ERROR", &format!("Delete failed for {cleaned}: {shown}"));
+            render::print_line(&format!("  ✗ Failed to delete backup: {}", error.message()));
+            logging::log(
+                "ERROR",
+                &format!("Delete failed for {cleaned}: {}", error.message()),
+            );
             return Err(error);
         }
     }
     Ok(Value::Null)
 }
 
-pub fn load_schedule() -> Result<Value, String> {
+pub fn load_schedule() -> Result<Value, CoreError> {
     let file = paths::cron_file();
     if !file.exists() {
         return Ok(json!({
@@ -133,17 +127,17 @@ pub fn load_schedule() -> Result<Value, String> {
     normalize_schedule(pyjson::read_json(&file)?)
 }
 
-fn normalize_schedule(value: Value) -> Result<Value, String> {
+fn normalize_schedule(value: Value) -> Result<Value, CoreError> {
     let Some(map) = value.as_object() else {
-        return Err(
-            "termux_sync.UserError: Invalid cron.json: top level must be an object".to_string(),
-        );
+        return Err(CoreError::user(
+            "Invalid cron.json: top level must be an object",
+        ));
     };
     let enabled = match map.get("enabled") {
         None => false,
         Some(value) => value
             .as_bool()
-            .ok_or("termux_sync.UserError: Invalid cron.json: enabled must be true or false")?,
+            .ok_or_else(|| CoreError::user("Invalid cron.json: enabled must be true or false"))?,
     };
     let hour = schedule_int(map.get("hour"), "hour", 2, 0, 23)?;
     let minute = schedule_int(map.get("minute"), "minute", 0, 0, 59)?;
@@ -151,9 +145,7 @@ fn normalize_schedule(value: Value) -> Result<Value, String> {
         None => "auto".to_string(),
         Some(Value::String(label)) => label.clone(),
         Some(_) => {
-            return Err(
-                "termux_sync.UserError: Invalid cron.json: label must be a string".to_string(),
-            );
+            return Err(CoreError::user("Invalid cron.json: label must be a string"));
         }
     };
     Ok(json!({
@@ -170,29 +162,29 @@ fn schedule_int(
     default: i64,
     min: i64,
     max: i64,
-) -> Result<i64, String> {
+) -> Result<i64, CoreError> {
     let Some(value) = value else {
         return Ok(default);
     };
     let Some(number) = fmt::py_int(value) else {
-        return Err(format!(
-            "termux_sync.UserError: Invalid cron.json: {key} must be an integer"
-        ));
+        return Err(CoreError::user(format!(
+            "Invalid cron.json: {key} must be an integer"
+        )));
     };
     if !(min..=max).contains(&number) {
-        return Err(format!(
-            "termux_sync.UserError: Invalid cron.json: {key} must be between {min} and {max}"
-        ));
+        return Err(CoreError::user(format!(
+            "Invalid cron.json: {key} must be between {min} and {max}"
+        )));
     }
     Ok(number)
 }
 
-pub fn save_schedule(sched: &Value) -> Result<(), String> {
-    fs::create_dir_all(paths::config_dir()).map_err(|error| format!("OSError: {error}"))?;
+pub fn save_schedule(sched: &Value) -> Result<(), CoreError> {
+    fs::create_dir_all(paths::config_dir()).map_err(CoreError::os)?;
     pyjson::write_json_private(&paths::cron_file(), sched)
 }
 
-pub fn setup() -> Result<Value, String> {
+pub fn setup() -> Result<Value, CoreError> {
     render::print_banner();
     render::print_section("SETUP", "Configure termux-sync storage and preferences");
     let cfg = match config::load_config() {
@@ -388,26 +380,24 @@ fn daemon_script_body(exe: &Path) -> String {
     )
 }
 
-fn write_daemon_script(enabled: bool) -> Result<(), String> {
+fn write_daemon_script(enabled: bool) -> Result<(), CoreError> {
     let boot_dir = paths::home_dir().join(".termux").join("boot");
     let script = boot_dir.join("termux-sync-daemon.sh");
     if !enabled {
         if script.exists() {
-            fs::remove_file(&script).map_err(|error| format!("OSError: {error}"))?;
+            fs::remove_file(&script).map_err(CoreError::os)?;
         }
         return Ok(());
     }
-    fs::create_dir_all(&boot_dir).map_err(|error| format!("OSError: {error}"))?;
+    fs::create_dir_all(&boot_dir).map_err(CoreError::os)?;
     let executable = env::current_exe().unwrap_or_else(|_| PathBuf::from("termux-sync"));
-    fs::write(&script, daemon_script_body(&executable))
-        .map_err(|error| format!("OSError: {error}"))?;
+    fs::write(&script, daemon_script_body(&executable)).map_err(CoreError::os)?;
     use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o755))
-        .map_err(|error| format!("OSError: {error}"))?;
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).map_err(CoreError::os)?;
     Ok(())
 }
 
-pub fn schedule() -> Result<Value, String> {
+pub fn schedule() -> Result<Value, CoreError> {
     render::print_banner();
     render::print_section("AUTO-BACKUP", "Schedule automatic backups");
     let mut sched = load_schedule()?;
@@ -430,7 +420,7 @@ pub fn schedule() -> Result<Value, String> {
         .unwrap_or_else(|| "auto".to_string());
     let map = sched
         .as_object_mut()
-        .ok_or("termux_sync.UserError: Invalid cron.json")?;
+        .ok_or_else(|| CoreError::user("Invalid cron.json"))?;
     map.insert("enabled".to_string(), Value::Bool(enable));
     if enable {
         let hour = loop {
@@ -476,7 +466,7 @@ pub fn schedule() -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-pub fn daemon(_cfg: &Value) -> Result<Value, String> {
+pub fn daemon(_cfg: &Value) -> Result<Value, CoreError> {
     let _lock = fsutil::try_lock_exclusive(&paths::config_dir().join("cron.lock"))?;
     let mut sched = match load_schedule() {
         Ok(sched) => sched,
@@ -544,7 +534,7 @@ pub fn daemon(_cfg: &Value) -> Result<Value, String> {
     }
 }
 
-pub fn status(cfg: &Value) -> Result<Value, String> {
+pub fn status(cfg: &Value) -> Result<Value, CoreError> {
     render::print_section("STATUS", "Current configuration and environment");
     let sched = load_schedule().unwrap_or_else(|_| json!({"enabled": false}));
     let storage = cfg_string(cfg, "storage", "local");
@@ -638,7 +628,7 @@ pub fn status(cfg: &Value) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-pub fn logs(lines: i64) -> Result<Value, String> {
+pub fn logs(lines: i64) -> Result<Value, CoreError> {
     render::print_section("LOGS", &paths::log_file().to_string_lossy());
     let file = paths::log_file();
     if !file.exists() {
@@ -670,7 +660,7 @@ pub fn logs(lines: i64) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-pub fn clear_logs(assume_yes: bool) -> Result<Value, String> {
+pub fn clear_logs(assume_yes: bool) -> Result<Value, CoreError> {
     render::print_section("CLEAR LOGS", &paths::log_file().to_string_lossy());
     let file = paths::log_file();
     if !file.exists() {
@@ -684,7 +674,7 @@ pub fn clear_logs(assume_yes: bool) -> Result<Value, String> {
         render::print_line("  Cancelled.");
         return Ok(Value::Null);
     }
-    fs::write(&file, "").map_err(|error| format!("OSError: {error}"))?;
+    fs::write(&file, "").map_err(CoreError::os)?;
     render::print_line("  ✓ Log file cleared.");
     logging::log("INFO", "Log file cleared by user");
     Ok(Value::Null)
@@ -715,7 +705,7 @@ fn check_paths(target: &str) -> Vec<(String, PathBuf)> {
     }
 }
 
-pub fn check(target: &str) -> Result<Value, String> {
+pub fn check(target: &str) -> Result<Value, CoreError> {
     render::print_section("DISK CHECK", "Storage usage overview");
     let paths = check_paths(target);
     if paths.iter().any(|(_, path)| !path.exists()) {
@@ -817,7 +807,7 @@ fn cache_targets() -> Vec<(&'static str, PathBuf)> {
     ]
 }
 
-pub fn clear_cache(assume_yes: bool) -> Result<Value, String> {
+pub fn clear_cache(assume_yes: bool) -> Result<Value, CoreError> {
     render::print_section("CLEAR CACHE", "Remove temporary and cached files");
     let existing: Vec<(&str, PathBuf, i64)> = cache_targets()
         .into_iter()
@@ -919,36 +909,36 @@ pub fn clear_cache(assume_yes: bool) -> Result<Value, String> {
         fmt::human_size(cleared)
     ));
     if !failures.is_empty() {
-        return Err(format!(
-            "RuntimeError: Could not remove: {}",
+        return Err(CoreError::runtime(format!(
+            "Could not remove: {}",
             failures.join(", ")
-        ));
+        )));
     }
     Ok(Value::Null)
 }
 
-fn remove_cache_entry(path: &Path) -> Result<u64, String> {
+fn remove_cache_entry(path: &Path) -> Result<u64, CoreError> {
     let size = fsutil::dir_size(path).max(0) as u64;
-    let metadata = fs::symlink_metadata(path).map_err(|error| format!("OSError: {error}"))?;
+    let metadata = fs::symlink_metadata(path).map_err(CoreError::os)?;
     if metadata.is_dir() && !metadata.file_type().is_symlink() {
-        fs::remove_dir_all(path).map_err(|error| format!("OSError: {error}"))?;
+        fs::remove_dir_all(path).map_err(CoreError::os)?;
     } else {
-        fs::remove_file(path).map_err(|error| format!("OSError: {error}"))?;
+        fs::remove_file(path).map_err(CoreError::os)?;
     }
     Ok(size)
 }
 
-fn ensure_not_live_config(out: &Path) -> Result<(), String> {
+fn ensure_not_live_config(out: &Path) -> Result<(), CoreError> {
     let live = paths::resolve_lenient(&paths::config_file());
     if paths::resolve_lenient(out) == live {
-        return Err(
-            "termux_sync.UserError: Refusing to export over the live config file".to_string(),
-        );
+        return Err(CoreError::user(
+            "Refusing to export over the live config file",
+        ));
     }
     Ok(())
 }
 
-pub fn export_config(output_path: &str) -> Result<Value, String> {
+pub fn export_config(output_path: &str) -> Result<Value, CoreError> {
     render::print_section("EXPORT CONFIG", "Save configuration to a file");
     let cfg = config::load_config()?;
     let mut safe = cfg.as_object().cloned().unwrap_or_else(Map::new);
@@ -989,7 +979,7 @@ pub fn export_config(output_path: &str) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-pub fn import_config(input_path: &str) -> Result<Value, String> {
+pub fn import_config(input_path: &str) -> Result<Value, CoreError> {
     render::print_section("IMPORT CONFIG", "Load configuration from a file");
     let path = if input_path.is_empty() {
         render::ask("Path to config file", "")?
@@ -998,9 +988,9 @@ pub fn import_config(input_path: &str) -> Result<Value, String> {
     };
     let source = paths::expand_user(&path);
     if !source.exists() {
-        return Err(format!("termux_sync.UserError: {}", source.display()));
+        return Err(CoreError::user(source.display().to_string()));
     }
-    let bytes = fs::read(&source).map_err(|error| format!("OSError: {error}"))?;
+    let bytes = fs::read(&source).map_err(CoreError::os)?;
     let new_cfg: Value =
         serde_json::from_slice(pyjson::strip_utf8_bom(&bytes)).map_err(|error| {
             let column = if error.column() == 0 {
@@ -1008,19 +998,19 @@ pub fn import_config(input_path: &str) -> Result<Value, String> {
             } else {
                 error.column()
             };
-            format!(
-                "termux_sync.UserError: Not a valid JSON file: {}\nLine {}, column {}: {}",
+            CoreError::user(format!(
+                "Not a valid JSON file: {}\nLine {}, column {}: {}",
                 source.display(),
                 error.line(),
                 column,
                 error
-            )
+            ))
         })?;
     let Some(new_cfg) = new_cfg.as_object() else {
-        return Err(format!(
-            "termux_sync.UserError: Not a valid config file: {}\nThe top level of the file must be a JSON object.",
+        return Err(CoreError::user(format!(
+            "Not a valid config file: {}\nThe top level of the file must be a JSON object.",
             source.display()
-        ));
+        )));
     };
     config::validate_patch(&Value::Object(new_cfg.clone()))?;
     let mut existing = match config::load_config() {
@@ -1032,7 +1022,7 @@ pub fn import_config(input_path: &str) -> Result<Value, String> {
         }
     };
     let Some(existing_map) = existing.as_object_mut() else {
-        return Err("AttributeError: config must be a JSON object".to_string());
+        return Err(CoreError::attribute("config must be a JSON object"));
     };
     for (key, value) in new_cfg {
         if let Value::String(text_value) = value

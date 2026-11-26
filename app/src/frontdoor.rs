@@ -3,6 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::process::ExitCode;
 
+use termux_sync_core::core::errors::{self, CoreError};
 use termux_sync_core::port;
 
 pub struct Options {
@@ -92,18 +93,10 @@ fn unknown(command: &str) -> ExitCode {
     ExitCode::from(2)
 }
 
-fn report_error(error: &str) -> ExitCode {
-    let (kind, message) = error.split_once(": ").unwrap_or(("", error));
-    let (title, hint) = if kind.ends_with("UserError") {
-        ("Cannot continue".to_string(), String::new())
-    } else {
-        (
-            "Operation failed".to_string(),
-            "See the message above. Details are saved in the log.".to_string(),
-        )
-    };
-    termux_sync_core::core::logging::log("ERROR", error);
-    let _ = port::print_error(title, message.to_string(), hint, String::new());
+fn report_error(error: &CoreError) -> ExitCode {
+    let _ = port::log("ERROR".to_string(), error.to_string());
+    let (title, message, hint) = errors::explain(error);
+    let _ = port::print_error(title, message, hint, String::new());
     ExitCode::from(1)
 }
 

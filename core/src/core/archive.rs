@@ -23,6 +23,7 @@ use tar::{Builder, EntryType, Header, HeaderMode};
 use xz2::read::XzDecoder;
 use xz2::write::XzEncoder;
 
+use crate::core::errors::CoreError;
 use crate::core::paths;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,7 +194,7 @@ pub fn create_archive_to_writer<W: Write>(
     sink: W,
     options: &ArchiveOptions,
     on_member: &mut dyn FnMut(&Path, u64),
-) -> Result<W, String> {
+) -> Result<W, CoreError> {
     let _guard = unlock_tree(source, &options.excludes);
     write_archive(source, sink, options, on_member)
 }
@@ -203,41 +204,29 @@ fn write_archive<W: Write>(
     sink: W,
     options: &ArchiveOptions,
     on_member: &mut dyn FnMut(&Path, u64),
-) -> Result<W, String> {
+) -> Result<W, CoreError> {
     let codec = Codec::parse(&options.compression);
     match codec {
         Codec::Gz => {
             let encoder = GzEncoder::new(sink, GzCompression::new(9));
             let mut builder = Builder::new(encoder);
             fill_archive(&mut builder, source, options, on_member)?;
-            let encoder = builder
-                .into_inner()
-                .map_err(|error| format!("OSError: {error}"))?;
-            encoder
-                .finish()
-                .map_err(|error| format!("OSError: {error}"))
+            let encoder = builder.into_inner().map_err(CoreError::os)?;
+            encoder.finish().map_err(CoreError::os)
         }
         Codec::Bz2 => {
             let encoder = BzEncoder::new(sink, BzCompression::new(9));
             let mut builder = Builder::new(encoder);
             fill_archive(&mut builder, source, options, on_member)?;
-            let encoder = builder
-                .into_inner()
-                .map_err(|error| format!("OSError: {error}"))?;
-            encoder
-                .finish()
-                .map_err(|error| format!("OSError: {error}"))
+            let encoder = builder.into_inner().map_err(CoreError::os)?;
+            encoder.finish().map_err(CoreError::os)
         }
         Codec::Xz => {
             let encoder = XzEncoder::new(sink, 6);
             let mut builder = Builder::new(encoder);
             fill_archive(&mut builder, source, options, on_member)?;
-            let encoder = builder
-                .into_inner()
-                .map_err(|error| format!("OSError: {error}"))?;
-            encoder
-                .finish()
-                .map_err(|error| format!("OSError: {error}"))
+            let encoder = builder.into_inner().map_err(CoreError::os)?;
+            encoder.finish().map_err(CoreError::os)
         }
     }
 }
@@ -247,17 +236,15 @@ pub fn create_archive(
     archive_path: &Path,
     options: &ArchiveOptions,
     on_member: &mut dyn FnMut(&Path, u64),
-) -> Result<ArchiveResult, String> {
+) -> Result<ArchiveResult, CoreError> {
     let codec = Codec::parse(&options.compression);
     let out_path = archive_path_for(archive_path, codec);
     if let Some(parent) = out_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("OSError: {error}"))?;
+        fs::create_dir_all(parent).map_err(CoreError::os)?;
     }
-    let file = File::create(&out_path).map_err(|error| format!("OSError: {error}"))?;
+    let file = File::create(&out_path).map_err(CoreError::os)?;
     create_archive_to_writer(source, file, options, on_member)?;
-    let size = fs::metadata(&out_path)
-        .map_err(|error| format!("OSError: {error}"))?
-        .len();
+    let size = fs::metadata(&out_path).map_err(CoreError::os)?.len();
     Ok(ArchiveResult {
         path: out_path,
         size,
@@ -269,7 +256,7 @@ fn fill_archive<W: Write>(
     source: &Path,
     options: &ArchiveOptions,
     on_member: &mut dyn FnMut(&Path, u64),
-) -> Result<(), String> {
+) -> Result<(), CoreError> {
     builder.follow_symlinks(false);
     builder.sparse(false);
     let excludes = wrapped_excludes(&options.excludes);
@@ -290,9 +277,7 @@ fn fill_archive<W: Write>(
         on_member(&arc, size);
         let file_type = meta.file_type();
         if file_type.is_dir() {
-            builder
-                .append_dir(&arc, &path)
-                .map_err(|error| format!("OSError: {error}"))?;
+            builder.append_dir(&arc, &path).map_err(CoreError::os)?;
             let mut children: Vec<(PathBuf, PathBuf)> = Vec::new();
             if let Ok(entries) = fs::read_dir(&path) {
                 for entry in entries.flatten() {
@@ -311,7 +296,7 @@ fn fill_archive<W: Write>(
         {
             builder
                 .append_path_with_name(&path, &arc)
-                .map_err(|error| format!("OSError: {error}"))?;
+                .map_err(CoreError::os)?;
         } else if file_type.is_socket() {
             continue;
         } else if file_type.is_file() {
@@ -325,29 +310,26 @@ fn fill_archive<W: Write>(
                 header.set_size(0);
                 builder
                     .append_link(&mut header, &arc, first)
-                    .map_err(|error| format!("OSError: {error}"))?;
+                    .map_err(CoreError::os)?;
                 continue;
             }
             if meta.nlink() > 1 {
                 seen.insert(key, arc.clone());
             }
-            let mut file = File::open(&path).map_err(|error| format!("OSError: {error}"))?;
+            let mut file = File::open(&path).map_err(CoreError::os)?;
             builder
                 .append_file(&arc, &mut file)
-                .map_err(|error| format!("OSError: {error}"))?;
+                .map_err(CoreError::os)?;
         }
     }
     Ok(())
 }
 
-fn source_reader(path: &Path) -> Result<Box<dyn Read>, String> {
-    let mut file = File::open(path).map_err(|error| format!("OSError: {error}"))?;
+fn source_reader(path: &Path) -> Result<Box<dyn Read>, CoreError> {
+    let mut file = File::open(path).map_err(CoreError::os)?;
     let mut magic = [0u8; 6];
-    let read = file
-        .read(&mut magic)
-        .map_err(|error| format!("OSError: {error}"))?;
-    file.seek(SeekFrom::Start(0))
-        .map_err(|error| format!("OSError: {error}"))?;
+    let read = file.read(&mut magic).map_err(CoreError::os)?;
+    file.seek(SeekFrom::Start(0)).map_err(CoreError::os)?;
     let _ = read;
     if magic.starts_with(&[0x1f, 0x8b]) {
         Ok(Box::new(MultiGzDecoder::new(file)))
@@ -478,15 +460,15 @@ fn create_regular(
     mode: u32,
     mtime: i64,
     budget: &mut u64,
-) -> Result<(), String> {
+) -> Result<(), CoreError> {
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("OSError: {error}"))?;
+        fs::create_dir_all(parent).map_err(CoreError::os)?;
     }
     if fs::symlink_metadata(target).is_ok_and(|meta| meta.is_dir()) {
-        return Err(format!(
+        return Err(CoreError::plain(format!(
             "Refusing to replace directory with file: {}",
             target.display()
-        ));
+        )));
     }
     remove_existing(target);
     let fd = open(
@@ -494,12 +476,12 @@ fn create_regular(
         OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC | OFlags::NOFOLLOW,
         Mode::from_raw_mode(mode),
     )
-    .map_err(|error| format!("OSError: {error}"))?;
+    .map_err(CoreError::os)?;
     let mut file = File::from(fd);
     let copied = std::io::copy(&mut entry.take(budget.saturating_add(1)), &mut file)
-        .map_err(|error| format!("OSError: {error}"))?;
+        .map_err(CoreError::os)?;
     if copied > *budget {
-        return Err(SIZE_LIMIT_ERROR.to_string());
+        return Err(CoreError::plain(SIZE_LIMIT_ERROR));
     }
     *budget -= copied;
     let _ = fs::set_permissions(target, fs::Permissions::from_mode(mode));
@@ -507,13 +489,13 @@ fn create_regular(
     Ok(())
 }
 
-fn create_dir(target: &Path, mode: u32, mtime: i64) -> Result<(), String> {
+fn create_dir(target: &Path, mode: u32, mtime: i64) -> Result<(), CoreError> {
     if let Ok(meta) = fs::symlink_metadata(target)
         && meta.file_type().is_symlink()
     {
         let _ = fs::remove_file(target);
     }
-    fs::create_dir_all(target).map_err(|error| format!("OSError: {error}"))?;
+    fs::create_dir_all(target).map_err(CoreError::os)?;
     let _ = fs::set_permissions(target, fs::Permissions::from_mode(mode));
     set_mtime(target, mtime);
     Ok(())
@@ -563,22 +545,20 @@ pub fn extract_archive(
     expected_top: Option<&str>,
     max_bytes: Option<u64>,
     on_member: &mut dyn FnMut(&Path),
-) -> Result<ExtractResult, String> {
+) -> Result<ExtractResult, CoreError> {
     let dest = paths::resolve_lenient(dest);
-    fs::create_dir_all(&dest).map_err(|error| format!("OSError: {error}"))?;
+    fs::create_dir_all(&dest).map_err(CoreError::os)?;
     let reader = source_reader(archive_path)?;
     let mut archive = tar::Archive::new(reader);
     let mut result = ExtractResult::default();
     let mut budget = max_bytes.unwrap_or(u64::MAX);
     let mut entries_seen = 0usize;
     let mut pending_links: Vec<(PathBuf, PathBuf, i64)> = Vec::new();
-    let entries = archive
-        .entries()
-        .map_err(|error| format!("ReadError: {error}"))?;
+    let entries = archive.entries().map_err(CoreError::read)?;
     for entry in entries {
         entries_seen += 1;
         if entries_seen > 1_000_000 {
-            return Err("Archive has more than 1000000 members".to_string());
+            return Err(CoreError::plain("Archive has more than 1000000 members"));
         }
         let mut entry = match entry {
             Ok(entry) => entry,
@@ -661,7 +641,7 @@ pub fn extract_archive(
         }
         if entry_type.is_file() {
             if let Err(error) = create_regular(&mut entry, &target, mode, mtime, &mut budget) {
-                if error == SIZE_LIMIT_ERROR {
+                if error == CoreError::plain(SIZE_LIMIT_ERROR) {
                     return Err(error);
                 }
                 result

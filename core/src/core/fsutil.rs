@@ -1,5 +1,6 @@
 //! Small filesystem helpers shared by maintenance commands.
 
+use crate::core::errors::CoreError;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
@@ -46,20 +47,17 @@ pub fn required_tools(storage: &str) -> Vec<(&'static str, bool)> {
     tools
 }
 
-pub fn try_lock_exclusive(path: &Path) -> Result<File, String> {
+pub fn try_lock_exclusive(path: &Path) -> Result<File, CoreError> {
     let file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(false)
         .mode(0o600)
         .open(path)
-        .map_err(|error| format!("OSError: {error}"))?;
+        .map_err(CoreError::os)?;
     use fs4::fs_std::FileExt;
-    if !file
-        .try_lock_exclusive()
-        .map_err(|error| format!("OSError: {error}"))?
-    {
-        return Err("termux_sync.UserError: Another daemon is already running".to_string());
+    if !file.try_lock_exclusive().map_err(CoreError::os)? {
+        return Err(CoreError::user("Another daemon is already running"));
     }
     Ok(file)
 }

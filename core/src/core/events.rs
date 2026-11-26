@@ -19,11 +19,22 @@ fn events() -> &'static Mutex<Option<EventState>> {
 }
 
 pub fn enable(secrets: Vec<String>) {
-    let secrets = secrets
+    let secrets: Vec<String> = secrets
         .into_iter()
         .filter(|secret| !secret.is_empty())
         .collect();
     if let Ok(mut guard) = events().lock() {
+        // A command with no config (setup, logs, import/export) passes an empty
+        // list. Keep the secrets already stored by `set_secrets` so redaction
+        // never weakens just because event output was enabled.
+        let secrets = if secrets.is_empty() {
+            guard
+                .as_ref()
+                .map(|state| state.secrets.clone())
+                .unwrap_or_default()
+        } else {
+            secrets
+        };
         *guard = Some(EventState {
             secrets,
             stdout_events: true,
@@ -47,6 +58,13 @@ pub fn set_secrets(secrets: Vec<String>) {
                 stdout_events: false,
             });
         }
+    }
+}
+
+#[cfg(test)]
+fn reset_for_test() {
+    if let Ok(mut guard) = events().lock() {
+        *guard = None;
     }
 }
 
@@ -199,5 +217,11 @@ mod tests {
     fn log_messages_are_redacted() {
         set_secrets(vec!["secret-token".to_string()]);
         assert_eq!(redact_message("token=secret-token"), "token=***");
+
+        // Enabling events without a config must not drop stored secrets.
+        enable(Vec::new());
+        assert_eq!(redact_message("token=secret-token"), "token=***");
+
+        reset_for_test();
     }
 }

@@ -11,6 +11,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::core::errors::CoreError;
 use crate::core::events::{self, EventProgress};
 use crate::core::fmt;
 use crate::core::manifest;
@@ -51,16 +52,17 @@ pub fn encode_segment(value: &str) -> String {
 }
 
 /// Parse a release-list response into a vector, or error on a non-2xx status.
-pub fn releases_from_response(status: u16, body: &str) -> Result<Vec<Value>, String> {
+pub fn releases_from_response(status: u16, body: &str) -> Result<Vec<Value>, CoreError> {
     if !(200..300).contains(&status) {
-        return Err(format!("GitHub API error {status}: {body}"));
+        return Err(CoreError::plain(format!(
+            "GitHub API error {status}: {body}"
+        )));
     }
-    let value: Value =
-        serde_json::from_str(body).map_err(|error| format!("RuntimeError: {error}"))?;
+    let value: Value = serde_json::from_str(body).map_err(CoreError::runtime)?;
     value
         .as_array()
         .cloned()
-        .ok_or_else(|| "RuntimeError: GitHub releases response was not an array".to_string())
+        .ok_or_else(|| CoreError::runtime("GitHub releases response was not an array"))
 }
 
 /// True when the remote asset reports exactly `local_size` bytes.
@@ -69,10 +71,11 @@ pub fn asset_matches(remote: &Value, local_size: u64) -> bool {
 }
 
 /// Group `.partNNNN` files in `dest` by their base name, or error when `dest` is unreadable.
-pub fn part_groups(dest: &Path) -> Result<HashMap<String, Vec<PathBuf>>, String> {
+pub fn part_groups(dest: &Path) -> Result<HashMap<String, Vec<PathBuf>>, CoreError> {
     let mut groups: HashMap<String, Vec<PathBuf>> = HashMap::new();
-    let entries = fs::read_dir(dest).map_err(|error| format!("OSError: {error}"))?;
-    let part_re = Regex::new(r"^(.+)\.part(\d{4})$").map_err(|error| error.to_string())?;
+    let entries = fs::read_dir(dest).map_err(CoreError::os)?;
+    let part_re =
+        Regex::new(r"^(.+)\.part(\d{4})$").map_err(|error| CoreError::plain(error.to_string()))?;
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if let Some(captures) = part_re.captures(&name)
@@ -117,7 +120,7 @@ fn agent() -> ureq::Agent {
 }
 
 impl GitHubStorage {
-    pub fn new(cfg: &Value) -> Result<Self, String> {
+    pub fn new(cfg: &Value) -> Result<Self, CoreError> {
         let token = cfg
             .get("github_token")
             .map(text::py_str)
@@ -129,15 +132,12 @@ impl GitHubStorage {
             .filter(|branch| !branch.is_empty())
             .unwrap_or_else(|| "main".to_string());
         if token.is_empty() || repo.is_empty() {
-            return Err(
-                "termux_sync.UserError: GitHub is not configured: the token or repository is not set."
-                    .to_string(),
-            );
+            return Err(CoreError::user(
+                "GitHub is not configured: the token or repository is not set.",
+            ));
         }
         if !valid_repo(&repo) {
-            return Err(
-                "termux_sync.UserError: Invalid GitHub repository; use owner/repo".to_string(),
-            );
+            return Err(CoreError::user("Invalid GitHub repository; use owner/repo"));
         }
         Ok(Self {
             token,
@@ -157,20 +157,19 @@ impl GitHubStorage {
         method: &str,
         url: &str,
         body: Option<Value>,
-    ) -> Result<ureq::http::Response<ureq::Body>, String> {
+    ) -> Result<ureq::http::Response<ureq::Body>, CoreError> {
         let response = if let Some(value) = body {
             let request = match method {
                 "PUT" => self.agent.put(url),
                 _ => self.agent.post(url),
             };
-            let text =
-                serde_json::to_string(&value).map_err(|error| format!("ValueError: {error}"))?;
+            let text = serde_json::to_string(&value).map_err(CoreError::value)?;
             request
                 .header("Authorization", &self.auth())
                 .header("Accept", "application/vnd.github.v3+json")
                 .header("Content-Type", "application/json")
                 .send(text)
-                .map_err(|error| format!("RuntimeError: {error}"))?
+                .map_err(CoreError::runtime)?
         } else {
             let request = match method {
                 "DELETE" => self.agent.delete(url),
@@ -180,28 +179,28 @@ impl GitHubStorage {
                 .header("Authorization", &self.auth())
                 .header("Accept", "application/vnd.github.v3+json")
                 .call()
-                .map_err(|error| format!("RuntimeError: {error}"))?
+                .map_err(CoreError::runtime)?
         };
         Ok(response)
     }
 
-    fn api(&self, method: &str, endpoint: &str, body: Option<Value>) -> Result<Value, String> {
+    fn api(&self, method: &str, endpoint: &str, body: Option<Value>) -> Result<Value, CoreError> {
         let response = self.request_raw(method, &format!("{API}{endpoint}"), body)?;
         let status = response.status().as_u16();
         let text = response
             .into_body()
             .read_to_string()
-            .map_err(|error| format!("RuntimeError: {error}"))?;
+            .map_err(CoreError::runtime)?;
         if !(200..300).contains(&status) {
             return Err(self.http_error(status, &text));
         }
         if text.trim().is_empty() {
             return Ok(json!({}));
         }
-        serde_json::from_str(&text).map_err(|error| format!("RuntimeError: {error}"))
+        serde_json::from_str(&text).map_err(CoreError::runtime)
     }
 
-    fn http_error(&self, code: u16, raw: &str) -> String {
+    fn http_error(&self, code: u16, raw: &str) -> CoreError {
         let parsed: Option<Value> = serde_json::from_str(raw).ok();
         let msg = parsed
             .as_ref()
@@ -223,39 +222,49 @@ impl GitHubStorage {
             .unwrap_or_default();
         let blob = format!("{msg} {extras}").to_lowercase();
         if matches!(code, 409 | 422) && blob.contains("empty") {
-            return format!(
-                "termux_sync.UserError: GitHub repository is empty: The repository '{}' has no commits yet, and GitHub cannot create a release in an empty repository.",
+            return CoreError::user(format!(
+                "GitHub repository is empty: The repository '{}' has no commits yet, and GitHub cannot create a release in an empty repository.",
                 self.repo
-            );
+            ));
         }
         match code {
-            401 => "termux_sync.UserError: Invalid GitHub token: GitHub rejected the token (bad credentials).".to_string(),
-            403 if blob.contains("rate limit") => {
-                "termux_sync.UserError: GitHub rate limit reached: GitHub is limiting requests from this token for now.".to_string()
-            }
-            403 => format!(
-                "termux_sync.UserError: GitHub denied access: {}",
-                if msg.is_empty() { "The token is not allowed to do this." } else { &msg }
+            401 => CoreError::user(
+                "Invalid GitHub token: GitHub rejected the token (bad credentials).",
             ),
-            404 => format!(
-                "termux_sync.UserError: GitHub repository not found: Repository '{}' was not found, or the token cannot see it.",
+            403 if blob.contains("rate limit") => CoreError::user(
+                "GitHub rate limit reached: GitHub is limiting requests from this token for now.",
+            ),
+            403 => CoreError::user(format!(
+                "GitHub denied access: {}",
+                if msg.is_empty() {
+                    "The token is not allowed to do this."
+                } else {
+                    &msg
+                }
+            )),
+            404 => CoreError::user(format!(
+                "GitHub repository not found: Repository '{}' was not found, or the token cannot see it.",
                 self.repo
-            ),
+            )),
             _ => {
                 let detail = [msg.as_str(), extras.as_str()]
                     .into_iter()
                     .filter(|part| !part.is_empty())
                     .collect::<Vec<_>>()
                     .join(": ");
-                format!(
-                    "RuntimeError: GitHub API error {code}: {}",
-                    if detail.is_empty() { "no details" } else { &detail }
-                )
+                CoreError::runtime(format!(
+                    "GitHub API error {code}: {}",
+                    if detail.is_empty() {
+                        "no details"
+                    } else {
+                        &detail
+                    }
+                ))
             }
         }
     }
 
-    pub fn preflight(&self) -> Result<(), String> {
+    pub fn preflight(&self) -> Result<(), CoreError> {
         self.api("GET", &format!("/repos/{}", self.repo), None)?;
         self.api(
             "GET",
@@ -265,7 +274,7 @@ impl GitHubStorage {
         Ok(())
     }
 
-    fn create_release(&self, backup_name: &str) -> Result<Value, String> {
+    fn create_release(&self, backup_name: &str) -> Result<Value, CoreError> {
         self.api(
             "POST",
             &format!("/repos/{}/releases", self.repo),
@@ -280,7 +289,7 @@ impl GitHubStorage {
         )
     }
 
-    fn get_release_by_tag(&self, tag: &str) -> Result<Option<Value>, String> {
+    fn get_release_by_tag(&self, tag: &str) -> Result<Option<Value>, CoreError> {
         let response = self.request_raw(
             "GET",
             &format!(
@@ -294,7 +303,7 @@ impl GitHubStorage {
         let text = response
             .into_body()
             .read_to_string()
-            .map_err(|error| format!("RuntimeError: {error}"))?;
+            .map_err(CoreError::runtime)?;
         if status == 404 {
             return Ok(None);
         }
@@ -303,10 +312,10 @@ impl GitHubStorage {
         }
         serde_json::from_str(&text)
             .map(Some)
-            .map_err(|error| format!("RuntimeError: {error}"))
+            .map_err(CoreError::runtime)
     }
 
-    fn list_releases(&self) -> Result<Vec<Value>, String> {
+    fn list_releases(&self) -> Result<Vec<Value>, CoreError> {
         let response = self.request_raw(
             "GET",
             &format!("{API}/repos/{}/releases?per_page=100", self.repo),
@@ -316,18 +325,18 @@ impl GitHubStorage {
         let body = response
             .into_body()
             .read_to_string()
-            .map_err(|error| format!("RuntimeError: {error}"))?;
+            .map_err(CoreError::runtime)?;
         releases_from_response(status, &body)
     }
 
-    fn release_for(&self, backup_name: &str) -> Result<Value, String> {
+    fn release_for(&self, backup_name: &str) -> Result<Value, CoreError> {
         if let Some(release) = self.get_release_by_tag(backup_name)? {
             return Ok(release);
         }
         self.create_release(backup_name)
     }
 
-    fn split_file(&self, src: &Path, tmp_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    fn split_file(&self, src: &Path, tmp_dir: &Path) -> Result<Vec<PathBuf>, CoreError> {
         self.split_file_at(src, tmp_dir, CHUNK_SIZE)
     }
 
@@ -336,40 +345,36 @@ impl GitHubStorage {
         src: &Path,
         tmp_dir: &Path,
         chunk: u64,
-    ) -> Result<Vec<PathBuf>, String> {
-        let size = fs::metadata(src)
-            .map_err(|error| format!("OSError: {error}"))?
-            .len();
+    ) -> Result<Vec<PathBuf>, CoreError> {
+        let size = fs::metadata(src).map_err(CoreError::os)?.len();
         if chunk == 0 {
-            return Err("ValueError: chunk size must be positive".to_string());
+            return Err(CoreError::value("chunk size must be positive"));
         }
         if size <= chunk {
             return Ok(vec![src.to_path_buf()]);
         }
-        let free = fs4::available_space(tmp_dir).map_err(|error| format!("OSError: {error}"))?;
+        let free = fs4::available_space(tmp_dir).map_err(CoreError::os)?;
         if free < size {
-            return Err(format!(
-                "termux_sync.UserError: Not enough free space: Only {} is free, but {} is needed.",
+            return Err(CoreError::user(format!(
+                "Not enough free space: Only {} is free, but {} is needed.",
                 fmt::human_size(free as i64),
                 fmt::human_size(size as i64)
-            ));
+            )));
         }
         let name = src
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let mut file = File::open(src).map_err(|error| format!("OSError: {error}"))?;
+        let mut file = File::open(src).map_err(CoreError::os)?;
         let mut chunks = Vec::new();
         let mut index = 0u32;
         loop {
             let part_path = tmp_dir.join(format!("{name}.part{index:04}"));
-            let output = File::create(&part_path).map_err(|error| format!("OSError: {error}"))?;
+            let output = File::create(&part_path).map_err(CoreError::os)?;
             let mut writer = BufWriter::with_capacity(8 * 1024, output);
-            let copied = std::io::copy(&mut (&mut file).take(chunk), &mut writer)
-                .map_err(|error| format!("OSError: {error}"))?;
-            writer
-                .flush()
-                .map_err(|error| format!("OSError: {error}"))?;
+            let copied =
+                std::io::copy(&mut (&mut file).take(chunk), &mut writer).map_err(CoreError::os)?;
+            writer.flush().map_err(CoreError::os)?;
             drop(writer);
             if copied == 0 {
                 let _ = fs::remove_file(&part_path);
@@ -384,18 +389,16 @@ impl GitHubStorage {
         Ok(chunks)
     }
 
-    pub fn upload_asset(&self, release_id: i64, path: &Path) -> Result<(), String> {
+    pub fn upload_asset(&self, release_id: i64, path: &Path) -> Result<(), CoreError> {
         let name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let size = fs::metadata(path)
-            .map_err(|error| format!("OSError: {error}"))?
-            .len();
+        let size = fs::metadata(path).map_err(CoreError::os)?.len();
         let url = format!("{UPLOAD}/repos/{}/releases/{release_id}/assets", self.repo);
         let mut last_error = String::new();
         for attempt in 0..MAX_RETRIES {
-            let file = File::open(path).map_err(|error| format!("OSError: {error}"))?;
+            let file = File::open(path).map_err(CoreError::os)?;
             let mut reader = BufReader::with_capacity(128 * 1024, file).take(size);
             let response = self
                 .agent
@@ -457,12 +460,12 @@ impl GitHubStorage {
             }
             return Err(self.http_error(status, &body));
         }
-        Err(format!(
-            "RuntimeError: Failed to upload {name} after {MAX_RETRIES} attempts: {last_error}"
-        ))
+        Err(CoreError::runtime(format!(
+            "Failed to upload {name} after {MAX_RETRIES} attempts: {last_error}"
+        )))
     }
 
-    fn release_assets(&self, release_id: i64) -> Result<Vec<Value>, String> {
+    fn release_assets(&self, release_id: i64) -> Result<Vec<Value>, CoreError> {
         let response = self.request_raw(
             "GET",
             &format!(
@@ -475,16 +478,16 @@ impl GitHubStorage {
         let body = response
             .into_body()
             .read_to_string()
-            .map_err(|error| format!("RuntimeError: {error}"))?;
+            .map_err(CoreError::runtime)?;
         releases_from_response(status, &body)
     }
 
-    pub fn upload(&self, backup_dir: &Path, backup_name: &str) -> Result<String, String> {
+    pub fn upload(&self, backup_dir: &Path, backup_name: &str) -> Result<String, CoreError> {
         let release = self.release_for(backup_name)?;
         let release_id = release
             .get("id")
             .and_then(Value::as_i64)
-            .ok_or_else(|| "RuntimeError: GitHub release has no id".to_string())?;
+            .ok_or_else(|| CoreError::runtime("GitHub release has no id"))?;
         let html_url = release
             .get("html_url")
             .map(text::py_str)
@@ -501,9 +504,9 @@ impl GitHubStorage {
             })
             .unwrap_or_default();
         let split_dir = paths::tmp_root().join(format!("termux-sync-split-{backup_name}"));
-        fs::create_dir_all(&split_dir).map_err(|error| format!("OSError: {error}"))?;
+        fs::create_dir_all(&split_dir).map_err(CoreError::os)?;
         let mut files: Vec<PathBuf> = fs::read_dir(backup_dir)
-            .map_err(|error| format!("OSError: {error}"))?
+            .map_err(CoreError::os)?
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| path.is_file())
@@ -522,29 +525,29 @@ impl GitHubStorage {
                     self.upload_asset(release_id, &chunk)?;
                 }
             }
-            Ok::<(), String>(())
+            Ok::<(), CoreError>(())
         })();
         let _ = fs::remove_dir_all(&split_dir);
         result?;
         Ok(html_url)
     }
 
-    pub fn begin_stream(&mut self, backup_name: &str, work_dir: &Path) -> Result<(), String> {
-        fs::create_dir_all(work_dir).map_err(|error| format!("OSError: {error}"))?;
+    pub fn begin_stream(&mut self, backup_name: &str, work_dir: &Path) -> Result<(), CoreError> {
+        fs::create_dir_all(work_dir).map_err(CoreError::os)?;
         let need = (CHUNK_SIZE as f64 * 1.2) as u64;
-        let free = fs4::available_space(work_dir).map_err(|error| format!("OSError: {error}"))?;
+        let free = fs4::available_space(work_dir).map_err(CoreError::os)?;
         if free < need {
-            return Err(format!(
-                "termux_sync.UserError: Not enough free space: Only {} is free, but about {} is needed to hold one upload part.",
+            return Err(CoreError::user(format!(
+                "Not enough free space: Only {} is free, but about {} is needed to hold one upload part.",
                 fmt::human_size(free as i64),
                 fmt::human_size(need as i64)
-            ));
+            )));
         }
         let release = self.release_for(backup_name)?;
         let release_id = release
             .get("id")
             .and_then(Value::as_i64)
-            .ok_or_else(|| "RuntimeError: GitHub release has no id".to_string())?;
+            .ok_or_else(|| CoreError::runtime("GitHub release has no id"))?;
         self.stream = Some(Arc::new(StreamState {
             release_id,
             work_dir: work_dir.to_path_buf(),
@@ -552,11 +555,11 @@ impl GitHubStorage {
         Ok(())
     }
 
-    pub fn stream_sink(&self, base_name: &str) -> Result<PartWriter, String> {
+    pub fn stream_sink(&self, base_name: &str) -> Result<PartWriter, CoreError> {
         let stream = self
             .stream
             .as_ref()
-            .ok_or_else(|| "RuntimeError: GitHub stream was not started".to_string())?;
+            .ok_or_else(|| CoreError::runtime("GitHub stream was not started"))?;
         Ok(PartWriter::new(
             self.clone(),
             stream.release_id,
@@ -613,7 +616,7 @@ impl GitHubStorage {
         backups
     }
 
-    fn download_asset_value(&self, asset_id: i64) -> Result<Value, String> {
+    fn download_asset_value(&self, asset_id: i64) -> Result<Value, CoreError> {
         let response = self
             .agent
             .get(&format!(
@@ -623,7 +626,7 @@ impl GitHubStorage {
             .header("Authorization", &self.auth())
             .header("Accept", "application/octet-stream")
             .call()
-            .map_err(|error| format!("RuntimeError: {error}"))?;
+            .map_err(CoreError::runtime)?;
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
             let text = response.into_body().read_to_string().unwrap_or_default();
@@ -632,11 +635,11 @@ impl GitHubStorage {
         let bytes = response
             .into_body()
             .read_to_vec()
-            .map_err(|error| format!("RuntimeError: {error}"))?;
-        serde_json::from_slice(&bytes).map_err(|error| format!("RuntimeError: {error}"))
+            .map_err(CoreError::runtime)?;
+        serde_json::from_slice(&bytes).map_err(CoreError::runtime)
     }
 
-    fn download_asset_file(&self, asset_id: i64, out: &Path) -> Result<u64, String> {
+    fn download_asset_file(&self, asset_id: i64, out: &Path) -> Result<u64, CoreError> {
         let mut last_error = String::new();
         for attempt in 0..MAX_RETRIES {
             let response = self
@@ -662,11 +665,11 @@ impl GitHubStorage {
                 if matches!(status, 401 | 403 | 404 | 409 | 422) {
                     return Err(self.http_error(status, &text));
                 }
-                last_error = self.http_error(status, &text);
+                last_error = self.http_error(status, &text).to_string();
                 std::thread::sleep(Duration::from_secs(15 * (attempt as u64 + 1)));
                 continue;
             }
-            let mut file = File::create(out).map_err(|error| format!("OSError: {error}"))?;
+            let mut file = File::create(out).map_err(CoreError::os)?;
             let mut reader = response.into_body().into_reader();
             match std::io::copy(&mut reader, &mut file) {
                 Ok(bytes) => return Ok(bytes),
@@ -676,16 +679,16 @@ impl GitHubStorage {
                 }
             }
         }
-        Err(format!(
-            "RuntimeError: Failed to download after {MAX_RETRIES} attempts: {last_error}"
-        ))
+        Err(CoreError::runtime(format!(
+            "Failed to download after {MAX_RETRIES} attempts: {last_error}"
+        )))
     }
 
-    pub fn download(&self, backup_name: &str, dest: &Path) -> Result<(), String> {
+    pub fn download(&self, backup_name: &str, dest: &Path) -> Result<(), CoreError> {
         let release = self.get_release_by_tag(backup_name)?.ok_or_else(|| {
-            format!("RuntimeError: No GitHub Release found for tag: {backup_name}")
+            CoreError::runtime(format!("No GitHub Release found for tag: {backup_name}"))
         })?;
-        fs::create_dir_all(dest).map_err(|error| format!("OSError: {error}"))?;
+        fs::create_dir_all(dest).map_err(CoreError::os)?;
         let mut assets = release
             .get("assets")
             .and_then(Value::as_array)
@@ -705,9 +708,9 @@ impl GitHubStorage {
             };
             let name = asset.get("name").map(text::py_str).unwrap_or_default();
             if manifest::clean_backup_name(&name) != name {
-                return Err(format!(
-                    "RuntimeError: Unsafe asset name in release: {name:?}"
-                ));
+                return Err(CoreError::runtime(format!(
+                    "Unsafe asset name in release: {name:?}"
+                )));
             }
             let bytes = self.download_asset_file(id, &dest.join(&name))?;
             done += bytes;
@@ -717,18 +720,17 @@ impl GitHubStorage {
         let groups = part_groups(dest)?;
         for (base, mut parts) in groups {
             parts.sort();
-            let mut out =
-                File::create(dest.join(&base)).map_err(|error| format!("OSError: {error}"))?;
+            let mut out = File::create(dest.join(&base)).map_err(CoreError::os)?;
             for part in parts {
-                let mut input = File::open(&part).map_err(|error| format!("OSError: {error}"))?;
-                std::io::copy(&mut input, &mut out).map_err(|error| format!("OSError: {error}"))?;
+                let mut input = File::open(&part).map_err(CoreError::os)?;
+                std::io::copy(&mut input, &mut out).map_err(CoreError::os)?;
                 let _ = fs::remove_file(part);
             }
         }
         Ok(())
     }
 
-    pub fn delete_old(&self, max_keep: i64) -> Result<(), String> {
+    pub fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
         let mut releases: Vec<Value> = self
             .list_releases()?
             .into_iter()
@@ -778,14 +780,16 @@ impl GitHubStorage {
         Ok(())
     }
 
-    pub fn delete_backup(&self, backup_name: &str) -> Result<(), String> {
+    pub fn delete_backup(&self, backup_name: &str) -> Result<(), CoreError> {
         let release = self.get_release_by_tag(backup_name)?.ok_or_else(|| {
-            format!("FileNotFoundError: Backup '{backup_name}' not found in GitHub Releases.")
+            CoreError::file_not_found(format!(
+                "Backup '{backup_name}' not found in GitHub Releases."
+            ))
         })?;
         let id = release
             .get("id")
             .and_then(Value::as_i64)
-            .ok_or_else(|| "RuntimeError: GitHub release has no id".to_string())?;
+            .ok_or_else(|| CoreError::runtime("GitHub release has no id"))?;
         self.api(
             "DELETE",
             &format!("/repos/{}/releases/{id}", self.repo),
@@ -870,9 +874,10 @@ impl PartWriter {
         Ok(())
     }
 
-    pub fn finish(mut self) -> Result<(u64, String), String> {
+    pub fn finish(mut self) -> Result<(u64, String), CoreError> {
         if self.file.is_some() {
-            self.flush_part(true).map_err(|error| error.to_string())?;
+            self.flush_part(true)
+                .map_err(|error| CoreError::plain(error.to_string()))?;
         }
         let digest = format!("{:x}", self.hasher.finalize());
         Ok((self.total, digest))

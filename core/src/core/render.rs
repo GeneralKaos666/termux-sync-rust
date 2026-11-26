@@ -5,6 +5,7 @@ use std::io::Write;
 
 use serde_json::Value;
 
+use crate::core::errors::CoreError;
 use crate::core::events;
 use crate::core::fmt;
 use crate::core::paths;
@@ -280,7 +281,7 @@ pub fn confirm(prompt: &str, default: bool) -> bool {
     }
 }
 
-pub fn ask(prompt: &str, default: &str) -> Result<String, String> {
+pub fn ask(prompt: &str, default: &str) -> Result<String, CoreError> {
     let shown = if default.is_empty() {
         format!("  {prompt}: ")
     } else {
@@ -289,10 +290,9 @@ pub fn ask(prompt: &str, default: &str) -> Result<String, String> {
     print_raw(&shown);
     let mut line = String::new();
     if std::io::stdin().read_line(&mut line).unwrap_or(0) == 0 {
-        return Err(
-            "termux_sync.UserError: Input was closed: termux-sync asked a question, but no answer could be read."
-                .to_string(),
-        );
+        return Err(CoreError::user(
+            "Input was closed: termux-sync asked a question, but no answer could be read.",
+        ));
     }
     let value = line.trim();
     if value.is_empty() {

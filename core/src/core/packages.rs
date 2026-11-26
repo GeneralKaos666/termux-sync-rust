@@ -3,20 +3,24 @@
 use std::path::Path;
 use std::process::Command;
 
+use crate::core::errors::CoreError;
 use crate::core::events;
 use crate::core::logging;
 
-pub fn installed_packages() -> Result<Vec<String>, String> {
+pub fn installed_packages() -> Result<Vec<String>, CoreError> {
     installed_packages_with(Path::new("dpkg"))
 }
 
-fn installed_packages_with(program: &Path) -> Result<Vec<String>, String> {
+fn installed_packages_with(program: &Path) -> Result<Vec<String>, CoreError> {
     let output = Command::new(program)
         .arg("--get-selections")
         .output()
-        .map_err(|error| format!("OSError: could not run dpkg: {error}"))?;
+        .map_err(|error| CoreError::os(format!("could not run dpkg: {error}")))?;
     if !output.status.success() {
-        return Err(format!("RuntimeError: dpkg exited with {}", output.status));
+        return Err(CoreError::runtime(format!(
+            "dpkg exited with {}",
+            output.status
+        )));
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let mut packages = Vec::new();

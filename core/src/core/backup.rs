@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 
 use crate::core::archive::{self, ArchiveOptions};
 use crate::core::config;
+use crate::core::errors::CoreError;
 use crate::core::events::{self, EventProgress};
 use crate::core::fmt;
 use crate::core::logging;
@@ -41,16 +42,15 @@ fn cleanup(path: &Path) {
     let _ = fs::remove_dir_all(path);
 }
 
-fn prepare_work_dir(path: &Path) -> Result<(), String> {
+fn prepare_work_dir(path: &Path) -> Result<(), CoreError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("OSError: {error}"))?;
+        fs::create_dir_all(parent).map_err(CoreError::os)?;
     }
-    fs::create_dir(path).map_err(|error| format!("OSError: {error}"))?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .map_err(|error| format!("OSError: {error}"))
+    fs::create_dir(path).map_err(CoreError::os)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(CoreError::os)
 }
 
-fn restore_work_dir(name: &str) -> Result<PathBuf, String> {
+fn restore_work_dir(name: &str) -> Result<PathBuf, CoreError> {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -60,21 +60,21 @@ fn restore_work_dir(name: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn ensure_extract_space(root: &Path, needed: u64) -> Result<(), String> {
-    let available = fs4::available_space(root).map_err(|error| format!("OSError: {error}"))?;
+fn ensure_extract_space(root: &Path, needed: u64) -> Result<(), CoreError> {
+    let available = fs4::available_space(root).map_err(CoreError::os)?;
     let required = needed.saturating_add(64 * 1024 * 1024);
     if available < required {
-        return Err("termux_sync.UserError: Not enough free space".to_string());
+        return Err(CoreError::user("Not enough free space"));
     }
     Ok(())
 }
 
-pub fn get_storage(cfg: &Value) -> Result<Value, String> {
+pub fn get_storage(cfg: &Value) -> Result<Value, CoreError> {
     let storage = Storage::from_config(cfg)?;
     Ok(json!({ "kind": storage.kind() }))
 }
 
-pub fn list(cfg: &Value) -> Result<Value, String> {
+pub fn list(cfg: &Value) -> Result<Value, CoreError> {
     let storage = Storage::from_config(cfg)?;
     render::print_section(
         "BACKUP LIST",
@@ -236,7 +236,7 @@ pub fn list(cfg: &Value) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
+pub fn backup(cfg: &Value, label: &str) -> Result<Value, CoreError> {
     let started = Instant::now();
     render::print_section(
         "BACKUP",
@@ -370,8 +370,7 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
         "packages".to_string(),
         Value::Array(installed.iter().cloned().map(Value::String).collect()),
     );
-    fs::write(tmp_dir.join("packages.txt"), installed.join("\n"))
-        .map_err(|error| format!("OSError: {error}"))?;
+    fs::write(tmp_dir.join("packages.txt"), installed.join("\n")).map_err(CoreError::os)?;
     render::print_line(&format!("  ✓ Found {} installed packages", installed.len()));
     logging::log("INFO", &format!("Collected {} packages", installed.len()));
     events::emit(
@@ -454,8 +453,8 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
         let injected_failure =
             std::env::var("TERMUX_SYNC_TEST_ARCHIVE_FAIL").is_ok_and(|want| want == key);
 
-        let archive_result: Result<(String, u64, String), String> = if injected_failure {
-            Err("injected archive failure".to_string())
+        let archive_result: Result<(String, u64, String), CoreError> = if injected_failure {
+            Err(CoreError::plain("injected archive failure"))
         } else if let Storage::GitHub(github) = &storage {
             match github.stream_sink(&out_name) {
                 Ok(sink) => {
@@ -717,9 +716,9 @@ pub fn backup(cfg: &Value, label: &str) -> Result<Value, String> {
             ],
         );
         cleanup(&tmp_dir);
-        return Err(format!(
-            "RuntimeError: Backup verification failed: {verify_details}"
-        ));
+        return Err(CoreError::runtime(format!(
+            "Backup verification failed: {verify_details}"
+        )));
     }
 
     cleanup(&tmp_dir);
@@ -837,11 +836,11 @@ fn restore_roots() -> HashMap<&'static str, (PathBuf, String)> {
     roots
 }
 
-pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
+pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, CoreError> {
     let started = Instant::now();
     let name = manifest::clean_backup_name(backup_name);
     if name.is_empty() || name != text::py_strip(backup_name) {
-        return Err("termux_sync.UserError: Invalid backup name".to_string());
+        return Err(CoreError::user("Invalid backup name"));
     }
     let storage = Storage::from_config(cfg)?;
     let tmp_dir = restore_work_dir(&name)?;
@@ -875,7 +874,7 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
         Ok(Some(manifest)) => manifest,
         Ok(None) => {
             cleanup(&tmp_dir);
-            return Err("termux_sync.UserError: Could not read manifest".to_string());
+            return Err(CoreError::user("Could not read manifest"));
         }
         Err(error) => {
             cleanup(&tmp_dir);
@@ -884,7 +883,7 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
     };
     if !manifest::manifest_shape(&manifest, true) {
         cleanup(&tmp_dir);
-        return Err("termux_sync.UserError: Backup manifest is malformed".to_string());
+        return Err(CoreError::user("Backup manifest is malformed"));
     }
     events::emit(
         "stage",
@@ -1048,7 +1047,7 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
                     ("exit_code", Value::from(1)),
                 ],
             );
-            return Err("termux_sync.UserError: Checksum verification failed".to_string());
+            return Err(CoreError::user("Checksum verification failed"));
         }
         let archive_path = tmp_dir.join(&archive_name);
         let expected = info.get("checksum").map(text::py_str).unwrap_or_default();
@@ -1065,7 +1064,7 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
                     ),
                 ],
             );
-            return Err("termux_sync.UserError: Checksum verification failed".to_string());
+            return Err(CoreError::user("Checksum verification failed"));
         }
         events::emit(
             "progress",
@@ -1116,7 +1115,7 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
             events::emit(
                 "error",
                 vec![
-                    ("message", Value::String(error.clone())),
+                    ("message", Value::String(error.to_string())),
                     (
                         "hint",
                         Value::String("Free some space and try again.".to_string()),
@@ -1297,10 +1296,10 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, String> {
             ],
         );
         cleanup(&tmp_dir);
-        return Err(format!(
-            "RuntimeError: Restore incomplete; failed archives: {}",
+        return Err(CoreError::runtime(format!(
+            "Restore incomplete; failed archives: {}",
             failed_archives.join(", ")
-        ));
+        )));
     }
 
     let package_failures = if backup_packages.is_empty() {

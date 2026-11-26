@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::core::errors::CoreError;
 use crate::core::events;
 use crate::core::github::GitHubStorage;
 use crate::core::manifest;
@@ -37,13 +38,12 @@ impl LocalStorage {
         }
     }
 
-    pub fn upload(&self, backup_dir: &Path, backup_name: &str) -> Result<UploadResult, String> {
+    pub fn upload(&self, backup_dir: &Path, backup_name: &str) -> Result<UploadResult, CoreError> {
         let dest = self.root.join(backup_name);
         if paths::resolve_lenient(&dest) == paths::resolve_lenient(backup_dir) {
-            return Err(
-                "RuntimeError: local_path points at the temporary backup directory; refusing to copy onto itself"
-                    .to_string(),
-            );
+            return Err(CoreError::runtime(
+                "local_path points at the temporary backup directory; refusing to copy onto itself",
+            ));
         }
         let staging = self
             .root
@@ -60,10 +60,10 @@ impl LocalStorage {
         backup_dir: &Path,
         staging: &Path,
         dest: &Path,
-    ) -> Result<UploadResult, String> {
-        fs::create_dir_all(staging).map_err(|error| format!("OSError: {error}"))?;
+    ) -> Result<UploadResult, CoreError> {
+        fs::create_dir_all(staging).map_err(CoreError::os)?;
         let mut files: Vec<PathBuf> = fs::read_dir(backup_dir)
-            .map_err(|error| format!("OSError: {error}"))?
+            .map_err(CoreError::os)?
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| path.is_file())
@@ -96,14 +96,14 @@ impl LocalStorage {
                 ],
             );
         }
-        fs::rename(staging, dest).map_err(|error| format!("OSError: {error}"))?;
+        fs::rename(staging, dest).map_err(CoreError::os)?;
         Ok(UploadResult {
             location: dest.to_string_lossy().into_owned(),
             checksums,
         })
     }
 
-    pub fn fetch_manifest(&self, backup_name: &str) -> Result<Option<Value>, String> {
+    pub fn fetch_manifest(&self, backup_name: &str) -> Result<Option<Value>, CoreError> {
         let name = manifest::clean_backup_name(backup_name);
         if name.is_empty() {
             return Ok(None);
@@ -131,18 +131,18 @@ impl LocalStorage {
             .collect()
     }
 
-    pub fn download(&self, backup_name: &str, dest: &Path) -> Result<(), String> {
+    pub fn download(&self, backup_name: &str, dest: &Path) -> Result<(), CoreError> {
         let name = manifest::clean_backup_name(backup_name);
         let source = self.root.join(&name);
         if name.is_empty() || !source.exists() {
-            return Err(format!(
-                "FileNotFoundError: Backup not found: {}",
+            return Err(CoreError::file_not_found(format!(
+                "Backup not found: {}",
                 source.display()
-            ));
+            )));
         }
-        fs::create_dir_all(dest).map_err(|error| format!("OSError: {error}"))?;
+        fs::create_dir_all(dest).map_err(CoreError::os)?;
         let mut files: Vec<PathBuf> = fs::read_dir(&source)
-            .map_err(|error| format!("OSError: {error}"))?
+            .map_err(CoreError::os)?
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| path.is_file())
@@ -175,7 +175,7 @@ impl LocalStorage {
         Ok(())
     }
 
-    pub fn delete_old(&self, max_keep: i64) -> Result<(), String> {
+    pub fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
         if !self.root.exists() {
             return Ok(());
         }
@@ -200,7 +200,7 @@ impl LocalStorage {
             if let Err(error) = fs::remove_dir_all(&path)
                 && first_error.is_none()
             {
-                first_error = Some(format!("OSError: {error}"));
+                first_error = Some(CoreError::os(error));
             }
         }
         match first_error {
@@ -209,19 +209,21 @@ impl LocalStorage {
         }
     }
 
-    pub fn delete_backup(&self, backup_name: &str) -> Result<(), String> {
+    pub fn delete_backup(&self, backup_name: &str) -> Result<(), CoreError> {
         let cleaned = manifest::clean_backup_name(backup_name);
         if cleaned.is_empty() {
-            return Err(format!("ValueError: Invalid backup name: {backup_name:?}"));
+            return Err(CoreError::value(format!(
+                "Invalid backup name: {backup_name:?}"
+            )));
         }
         let target = self.root.join(cleaned);
         if !target.exists() {
-            return Err(format!(
-                "FileNotFoundError: Backup not found: {}",
+            return Err(CoreError::file_not_found(format!(
+                "Backup not found: {}",
                 target.display()
-            ));
+            )));
         }
-        fs::remove_dir_all(target).map_err(|error| format!("OSError: {error}"))
+        fs::remove_dir_all(target).map_err(CoreError::os)
     }
 }
 
@@ -245,7 +247,7 @@ fn is_backup_dir(path: &Path) -> bool {
         .is_some()
 }
 
-fn read_manifest(dir: &Path) -> Result<Option<Value>, String> {
+fn read_manifest(dir: &Path) -> Result<Option<Value>, CoreError> {
     let file = dir.join("manifest.json");
     if !file.exists() {
         return Ok(None);
@@ -253,14 +255,12 @@ fn read_manifest(dir: &Path) -> Result<Option<Value>, String> {
     crate::core::json::read_json(&file).map(Some)
 }
 
-pub fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|error| format!("OSError: {error}"))?;
+pub fn sha256_file(path: &Path) -> Result<String, CoreError> {
+    let mut file = File::open(path).map_err(CoreError::os)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 1 << 20];
     loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|error| format!("OSError: {error}"))?;
+        let read = file.read(&mut buffer).map_err(CoreError::os)?;
         if read == 0 {
             break;
         }
@@ -269,24 +269,24 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-pub fn copy_with_sha(src: &Path, dst: &Path) -> Result<String, String> {
+pub fn copy_with_sha(src: &Path, dst: &Path) -> Result<String, CoreError> {
     if dst.exists() {
-        let left = fs::metadata(src).map_err(|error| format!("OSError: {error}"))?;
-        let right = fs::metadata(dst).map_err(|error| format!("OSError: {error}"))?;
+        let left = fs::metadata(src).map_err(CoreError::os)?;
+        let right = fs::metadata(dst).map_err(CoreError::os)?;
         if left.dev() == right.dev() && left.ino() == right.ino() {
-            return Err(format!(
-                "SameFileError: source and destination are the same file: {}",
+            return Err(CoreError::same_file(format!(
+                "source and destination are the same file: {}",
                 src.display()
-            ));
+            )));
         }
     }
     copy_with_stat(src, dst)?;
     sha256_file(dst)
 }
 
-pub fn copy_with_stat(src: &Path, dst: &Path) -> Result<(), String> {
-    let meta = fs::metadata(src).map_err(|error| format!("OSError: {error}"))?;
-    fs::copy(src, dst).map_err(|error| format!("OSError: {error}"))?;
+pub fn copy_with_stat(src: &Path, dst: &Path) -> Result<(), CoreError> {
+    let meta = fs::metadata(src).map_err(CoreError::os)?;
+    fs::copy(src, dst).map_err(CoreError::os)?;
     let _ = fs::set_permissions(dst, fs::Permissions::from_mode(meta.permissions().mode()));
     if let (Ok(accessed), Ok(modified)) = (meta.accessed(), meta.modified()) {
         let times = FileTimes::new()
@@ -354,7 +354,7 @@ pub enum Storage {
 }
 
 impl Storage {
-    pub fn from_config(cfg: &Value) -> Result<Self, String> {
+    pub fn from_config(cfg: &Value) -> Result<Self, CoreError> {
         match cfg
             .get("storage")
             .and_then(Value::as_str)
@@ -363,9 +363,9 @@ impl Storage {
             "local" => Ok(Self::Local(LocalStorage::new(cfg))),
             "gdrive" => Ok(Self::Rclone(RcloneStorage::new(cfg)?)),
             "github" => Ok(Self::GitHub(GitHubStorage::new(cfg)?)),
-            other => Err(format!(
-                "termux_sync.UserError: Unknown storage backend: {other:?}"
-            )),
+            other => Err(CoreError::user(format!(
+                "Unknown storage backend: {other:?}"
+            ))),
         }
     }
 
@@ -377,7 +377,7 @@ impl Storage {
         }
     }
 
-    pub fn preflight(&self) -> Result<(), String> {
+    pub fn preflight(&self) -> Result<(), CoreError> {
         match self {
             Self::Local(_) | Self::Rclone(_) => Ok(()),
             Self::GitHub(github) => github.preflight(),
@@ -392,7 +392,7 @@ impl Storage {
         }
     }
 
-    pub fn fetch_manifest(&self, name: &str) -> Result<Option<Value>, String> {
+    pub fn fetch_manifest(&self, name: &str) -> Result<Option<Value>, CoreError> {
         match self {
             Self::Local(local) => local.fetch_manifest(name),
             Self::Rclone(rclone) => Ok(rclone.fetch_manifest(name)),
@@ -400,7 +400,7 @@ impl Storage {
         }
     }
 
-    pub fn download(&self, name: &str, dest: &Path) -> Result<(), String> {
+    pub fn download(&self, name: &str, dest: &Path) -> Result<(), CoreError> {
         match self {
             Self::Local(local) => local.download(name, dest),
             Self::Rclone(rclone) => rclone.download(name, dest),
@@ -408,7 +408,7 @@ impl Storage {
         }
     }
 
-    pub fn upload(&self, dir: &Path, name: &str) -> Result<UploadResult, String> {
+    pub fn upload(&self, dir: &Path, name: &str) -> Result<UploadResult, CoreError> {
         match self {
             Self::Local(local) => local.upload(dir, name),
             Self::Rclone(rclone) => rclone.upload(dir, name).map(|location| UploadResult {
@@ -422,7 +422,7 @@ impl Storage {
         }
     }
 
-    pub fn delete_old(&self, max_keep: i64) -> Result<(), String> {
+    pub fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
         match self {
             Self::Local(local) => local.delete_old(max_keep),
             Self::Rclone(rclone) => rclone.delete_old(max_keep),
@@ -430,7 +430,7 @@ impl Storage {
         }
     }
 
-    pub fn delete_backup(&self, name: &str) -> Result<(), String> {
+    pub fn delete_backup(&self, name: &str) -> Result<(), CoreError> {
         match self {
             Self::Local(local) => local.delete_backup(name),
             Self::Rclone(rclone) => rclone.delete_backup(name),

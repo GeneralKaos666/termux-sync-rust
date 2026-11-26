@@ -1,7 +1,8 @@
 use serde_json::json;
 use termux_sync_core::core::backup;
+use termux_sync_core::core::errors::CoreError;
 
-fn main() -> Result<(), String> {
+fn main() -> Result<(), CoreError> {
     let cfg = json!({
         "storage": "local",
         "local_path": "~/termux-backups",

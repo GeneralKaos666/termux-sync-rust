@@ -3,22 +3,23 @@
 use std::fs;
 use std::path::Path;
 
+use crate::core::errors::CoreError;
 use serde_json::Value;
 
-pub fn read_json(path: &Path) -> Result<Value, String> {
-    let bytes = fs::read(path).map_err(|error| format!("OSError: {error}"))?;
+pub fn read_json(path: &Path) -> Result<Value, CoreError> {
+    let bytes = fs::read(path).map_err(CoreError::os)?;
     let bytes = strip_utf8_bom(&bytes).to_vec();
     serde_json::from_slice(&bytes).map_err(|error| {
         let mut column = error.column();
         if column == 0 {
             column = 1;
         }
-        format!(
-            "JSONDecodeError: {} at line {}, column {}",
+        CoreError::json_decode(format!(
+            "{} at line {}, column {}",
             error,
             error.line(),
             column
-        )
+        ))
     })
 }
 
@@ -27,20 +28,19 @@ pub fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
 }
 
 /// Python `json.dump(..., indent=2)` escapes non-ASCII by default.
-pub fn to_string_pretty_ascii(value: &Value) -> Result<String, String> {
-    let text =
-        serde_json::to_string_pretty(value).map_err(|error| format!("ValueError: {error}"))?;
+pub fn to_string_pretty_ascii(value: &Value) -> Result<String, CoreError> {
+    let text = serde_json::to_string_pretty(value).map_err(CoreError::value)?;
     Ok(escape_non_ascii(&text))
 }
 
-pub fn write_json_pretty_ascii(path: &Path, value: &Value) -> Result<(), String> {
+pub fn write_json_pretty_ascii(path: &Path, value: &Value) -> Result<(), CoreError> {
     let text = to_string_pretty_ascii(value)?;
-    fs::write(path, text).map_err(|error| format!("OSError: {error}"))
+    fs::write(path, text).map_err(CoreError::os)
 }
 
 /// Write JSON atomically (temp file + rename) with mode 0600, so a secret-bearing
 /// export is never readable by other users and a crash cannot leave a half file.
-pub fn write_json_private(path: &Path, value: &Value) -> Result<(), String> {
+pub fn write_json_private(path: &Path, value: &Value) -> Result<(), CoreError> {
     use std::fs::OpenOptions;
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -50,7 +50,7 @@ pub fn write_json_private(path: &Path, value: &Value) -> Result<(), String> {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent).map_err(|error| format!("OSError: {error}"))?;
+    fs::create_dir_all(parent).map_err(CoreError::os)?;
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -62,12 +62,10 @@ pub fn write_json_private(path: &Path, value: &Value) -> Result<(), String> {
         .truncate(true)
         .mode(0o600)
         .open(&tmp)
-        .map_err(|error| format!("OSError: {error}"))?;
-    handle
-        .write_all(text.as_bytes())
-        .map_err(|error| format!("OSError: {error}"))?;
+        .map_err(CoreError::os)?;
+    handle.write_all(text.as_bytes()).map_err(CoreError::os)?;
     drop(handle);
-    fs::rename(&tmp, path).map_err(|error| format!("OSError: {error}"))?;
+    fs::rename(&tmp, path).map_err(CoreError::os)?;
     let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
     Ok(())
 }
