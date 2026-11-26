@@ -48,6 +48,7 @@ pub fn event_stage(stage_id: &str, label: &str, index: i64, total: i64, state: &
 }
 
 /// Port of `event_confirmation` (`src/termux_sync/__init__.py:358`).
+#[must_use]
 pub fn event_confirmation() -> bool {
     events::confirmation()
 }
@@ -74,6 +75,7 @@ pub fn set_secrets(cfg: &Value) {
     events::set_secrets(secrets);
 }
 
+/// Forward the debug flag to [`maintenance::set_debug`], which gates verbose output.
 pub fn set_debug(enabled: bool) {
     maintenance::set_debug(enabled);
 }
@@ -87,12 +89,10 @@ pub fn print_error(title: &str, message: &str, hint: &str, r#where: &str) {
 pub fn handle_crash(exc: &Value) {
     let kind = exc
         .get("type")
-        .map(text::py_str)
-        .unwrap_or_else(|| "Exception".to_string());
+        .map_or_else(|| "Exception".to_string(), text::py_str);
     let message = exc
         .get("message")
-        .map(text::py_str)
-        .unwrap_or_else(|| text::py_str(exc));
+        .map_or_else(|| text::py_str(exc), text::py_str);
     logging::log("ERROR", &format!("{kind}: {message}"));
     let error = CoreError::from_kind(&kind, message);
     let (title, body, hint) = errors::explain(&error);
@@ -123,11 +123,13 @@ pub fn print_section(title: &str, subtitle: &str) {
 }
 
 /// Port of `status_icon` (`src/termux_sync/__init__.py:530`).
+#[must_use]
 pub fn status_icon(ok: bool) -> String {
     fmt::status_icon(ok)
 }
 
 /// Port of `is_narrow` (`src/termux_sync/__init__.py:534`).
+#[must_use]
 pub fn is_narrow() -> bool {
     fmt::is_narrow()
 }
@@ -136,6 +138,7 @@ pub fn is_narrow() -> bool {
 pub fn make_progress(_transient: bool, _percent: bool) {}
 
 /// Port of `fmt_elapsed` (`src/termux_sync/__init__.py:558`).
+#[must_use]
 pub fn fmt_elapsed(seconds: f64) -> String {
     fmt::fmt_elapsed(seconds)
 }
@@ -146,6 +149,7 @@ pub fn print_backup_list(backups: &[Value], title: &str) {
 }
 
 /// Port of `human_size` (`src/termux_sync/__init__.py:619`).
+#[must_use]
 pub fn human_size(size_bytes: i64) -> String {
     fmt::human_size(size_bytes)
 }
@@ -179,6 +183,7 @@ pub fn get_installed_packages() -> Result<Vec<String>, CoreError> {
 }
 
 /// Port of `install_packages` (`src/termux_sync/__init__.py:685`).
+#[must_use]
 pub fn install_packages(pkg_list: &[String], _console: Value) -> Vec<String> {
     packages::install(pkg_list)
 }
@@ -255,6 +260,7 @@ pub fn cmd_daemon(cfg: Value) -> Result<Value, CoreError> {
 }
 
 /// Port of `short_path` (`src/termux_sync/__init__.py:2726`).
+#[must_use]
 pub fn short_path(p: Value) -> String {
     fmt::short_path(&text::py_str(&p))
 }

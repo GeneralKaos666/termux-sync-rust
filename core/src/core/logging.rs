@@ -9,6 +9,8 @@ use serde_json::Value;
 use crate::core::events;
 use crate::core::paths;
 
+/// Append a redacted `[timestamp] [LEVEL] message` line to the log file and
+/// emit it as an `event=log` event. Failures to write are ignored.
 pub fn log(level: &str, message: &str) {
     let dir = paths::config_dir();
     let _ = fs::create_dir_all(&dir);

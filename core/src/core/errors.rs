@@ -53,56 +53,69 @@ pub enum CoreError {
 }
 
 impl CoreError {
+    /// Builds a [`CoreError::User`], keeping the `termux_sync.UserError` prefix.
     pub fn user(message: impl Into<String>) -> Self {
         Self::User(message.into())
     }
 
+    /// Builds a [`CoreError::UserShort`] for messages that are already localised.
     pub fn user_short(message: impl Into<String>) -> Self {
         Self::UserShort(message.into())
     }
 
+    /// Builds a [`CoreError::Os`] from any displayable error.
     pub fn os(error: impl Display) -> Self {
         Self::Os(error.to_string())
     }
 
+    /// Builds a [`CoreError::Runtime`] from any displayable error.
     pub fn runtime(message: impl Display) -> Self {
         Self::Runtime(message.to_string())
     }
 
+    /// Builds a [`CoreError::Value`] from any displayable error.
     pub fn value(message: impl Display) -> Self {
         Self::Value(message.to_string())
     }
 
+    /// Builds a [`CoreError::FileNotFound`] for a missing path or backup.
     pub fn file_not_found(message: impl Into<String>) -> Self {
         Self::FileNotFound(message.into())
     }
 
+    /// Builds a [`CoreError::Permission`] for a path the process may not touch.
     pub fn permission(message: impl Into<String>) -> Self {
         Self::Permission(message.into())
     }
 
+    /// Builds a [`CoreError::Attribute`] for a document with the wrong shape.
     pub fn attribute(message: impl Into<String>) -> Self {
         Self::Attribute(message.into())
     }
 
+    /// Builds a [`CoreError::SameFile`] when source and destination are one inode.
     pub fn same_file(message: impl Into<String>) -> Self {
         Self::SameFile(message.into())
     }
 
+    /// Builds a [`CoreError::Read`] for an unreadable archive or stream.
     pub fn read(message: impl Display) -> Self {
         Self::Read(message.to_string())
     }
 
+    /// Builds a [`CoreError::JsonDecode`] for invalid JSON.
     pub fn json_decode(message: impl Display) -> Self {
         Self::JsonDecode(message.to_string())
     }
 
+    /// Builds a [`CoreError::Plain`], rendered without a kind prefix.
     pub fn plain(message: impl Into<String>) -> Self {
         Self::Plain(message.into())
     }
 
     /// Substring search in the rendered message. Test-only convenience.
     #[cfg(test)]
+    #[must_use]
     pub fn contains(&self, pattern: &str) -> bool {
         self.to_string().contains(pattern)
     }
@@ -126,6 +139,7 @@ impl CoreError {
     }
 
     /// Python exception name, for log lines and legacy callers.
+    #[must_use]
     pub fn kind(&self) -> &'static str {
         match self {
             Self::User(_) | Self::UserShort(_) => "UserError",
@@ -143,6 +157,7 @@ impl CoreError {
     }
 
     /// Message without the `"<Kind>: "` prefix.
+    #[must_use]
     pub fn message(&self) -> &str {
         match self {
             Self::User(message)
@@ -162,6 +177,7 @@ impl CoreError {
 }
 
 /// Title, message and hint for a terminal error card.
+#[must_use]
 pub fn explain(error: &CoreError) -> (String, String, String) {
     let message = error.message().to_string();
     match error {

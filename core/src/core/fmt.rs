@@ -5,6 +5,9 @@ use crate::core::term;
 use crate::core::text::head_chars;
 use serde_json::Value;
 
+/// Format a byte count with one decimal and a binary unit (`B` to `TB`), the
+/// way the CLI prints backup sizes.
+#[must_use]
 pub fn human_size(size_bytes: i64) -> String {
     let mut size = size_bytes as f64;
     for unit in ["B", "KB", "MB", "GB"] {
@@ -17,6 +20,7 @@ pub fn human_size(size_bytes: i64) -> String {
 }
 
 /// Python `int(seconds)` truncates toward zero; `//` and `%` floor.
+#[must_use]
 pub fn fmt_elapsed(seconds: f64) -> String {
     let seconds = seconds as i64;
     let hours = seconds.div_euclid(3600);
@@ -24,6 +28,8 @@ pub fn fmt_elapsed(seconds: f64) -> String {
     format!("{hours}:{:02}:{:02}", rem / 60, rem % 60)
 }
 
+/// `[bold green]✓[/bold green]` for success, a red `✗` otherwise.
+#[must_use]
 pub fn status_icon(ok: bool) -> String {
     if ok {
         "[bold green]✓[/bold green]".to_string()
@@ -32,6 +38,9 @@ pub fn status_icon(ok: bool) -> String {
     }
 }
 
+/// A `▓`/`░` progress bar of `width` cells showing `part` of `total`, coloured
+/// green under 50%, yellow under 80% and red above. A zero total reads as 0%.
+#[must_use]
 pub fn pct_bar(part: i64, total: i64, width: usize) -> String {
     let pct = if total == 0 {
         0.0
@@ -54,10 +63,14 @@ pub fn pct_bar(part: i64, total: i64, width: usize) -> String {
     )
 }
 
+/// Whether the terminal is narrower than 72 columns, where layouts collapse.
+#[must_use]
 pub fn is_narrow() -> bool {
     term::width() < 72
 }
 
+/// Abbreviate a path with `$PREFIX` or `~` when it lies inside one of them.
+#[must_use]
 pub fn short_path(path: &str) -> String {
     let prefix = paths::prefix();
     let home = paths::home_dir();
@@ -79,6 +92,7 @@ pub fn short_path(path: &str) -> String {
 }
 
 /// Python `int(size_bytes)` on a JSON value, truncating toward zero.
+#[must_use]
 pub fn py_int(value: &Value) -> Option<i64> {
     match value {
         Value::Number(number) => number
@@ -90,43 +104,40 @@ pub fn py_int(value: &Value) -> Option<i64> {
     }
 }
 
+/// The backup's `date` shortened to 16 characters with `T` replaced by a space,
+/// or an em dash when absent.
 pub fn backup_date(backup: &Value) -> String {
     let date = backup
         .get("date")
-        .map(crate::core::text::py_str)
-        .unwrap_or_else(|| "—".to_string());
+        .map_or_else(|| "—".to_string(), crate::core::text::py_str);
     head_chars(&date, 16).replace('T', " ")
 }
 
+/// The backup's label, or the empty string when it is missing or equal to the
+/// backup name (a redundant label is not shown twice).
 pub fn backup_label(backup: &Value) -> String {
     let label = backup
         .get("label")
-        .map(crate::core::text::py_str)
-        .unwrap_or_default();
-    if label
-        == backup
-            .get("name")
-            .map(crate::core::text::py_str)
-            .unwrap_or_default()
-    {
+        .map_or_default(crate::core::text::py_str);
+    if label == backup.get("name").map_or_default(crate::core::text::py_str) {
         String::new()
     } else {
         label
     }
 }
 
+/// Total size in bytes of all files recorded in the backup's `files` map.
 pub fn backup_size(backup: &Value) -> i64 {
     backup
         .get("files")
         .and_then(Value::as_object)
-        .map(|files| {
+        .map_or(0, |files| {
             files
                 .values()
                 .filter_map(|info| info.get("size"))
                 .filter_map(py_int)
                 .sum()
         })
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

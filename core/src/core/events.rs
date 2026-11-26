@@ -18,6 +18,9 @@ fn events() -> &'static Mutex<Option<EventState>> {
     EVENTS.get_or_init(|| Mutex::new(None))
 }
 
+/// Turn on stdout event output for this process. An empty `secrets` list keeps
+/// any secrets already registered with [`set_secrets`], so redaction cannot be
+/// weakened by enabling events later.
 pub fn enable(secrets: Vec<String>) {
     let secrets: Vec<String> = secrets
         .into_iter()
@@ -28,10 +31,7 @@ pub fn enable(secrets: Vec<String>) {
         // list. Keep the secrets already stored by `set_secrets` so redaction
         // never weakens just because event output was enabled.
         let secrets = if secrets.is_empty() {
-            guard
-                .as_ref()
-                .map(|state| state.secrets.clone())
-                .unwrap_or_default()
+            guard.as_ref().map_or_default(|state| state.secrets.clone())
         } else {
             secrets
         };
@@ -68,11 +68,12 @@ fn reset_for_test() {
     }
 }
 
+/// Whether events are currently written to stdout.
+#[must_use]
 pub fn enabled() -> bool {
     events()
         .lock()
-        .map(|guard| guard.as_ref().is_some_and(|state| state.stdout_events))
-        .unwrap_or(false)
+        .is_ok_and(|guard| guard.as_ref().is_some_and(|state| state.stdout_events))
 }
 
 fn redact_text(text: &str, secrets: &[String]) -> String {
@@ -83,6 +84,8 @@ fn redact_text(text: &str, secrets: &[String]) -> String {
     out
 }
 
+/// Replace every occurrence of each registered secret in `message` with `***`.
+#[must_use]
 pub fn redact_message(message: &str) -> String {
     let secrets = events()
         .lock()
@@ -136,11 +139,12 @@ pub fn emit(event: &str, fields: Vec<(&str, Value)>) {
     }
 }
 
+/// Milliseconds since the Unix epoch, or 0 if the clock is before it.
+#[must_use]
 pub fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0)
+        .map_or(0, |duration| duration.as_millis() as i64)
 }
 
 /// Throttle high-frequency progress callbacks into event lines.
@@ -152,6 +156,7 @@ pub struct EventProgress {
 }
 
 impl EventProgress {
+    /// Create a throttled emitter for `stage`, with a 500 ms floor between lines.
     pub fn new(stage: impl Into<String>) -> Self {
         Self {
             stage: stage.into(),
@@ -160,6 +165,8 @@ impl EventProgress {
         }
     }
 
+    /// Emit a `progress` event unless one was sent less than the interval ago.
+    /// `force` skips the throttle; `total` and `detail` are omitted when `None`.
     pub fn emit(
         &mut self,
         current: u64,
@@ -205,8 +212,7 @@ pub fn confirmation() -> bool {
         .as_object()
         .and_then(|map| map.get("confirm"))
         .map(crate::core::text::py_str)
-        .map(|text| crate::core::text::py_strip(&text) == "RESTORE")
-        .unwrap_or(false)
+        .is_some_and(|text| crate::core::text::py_strip(&text) == "RESTORE")
 }
 
 #[cfg(test)]

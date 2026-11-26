@@ -6,6 +6,9 @@ use std::fs::{self, File, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
+/// Recursive size in bytes of regular files below `path`. Symlinks and
+/// unreadable entries are skipped; an unreadable directory contributes 0.
+#[must_use]
 pub fn dir_size(path: &Path) -> i64 {
     let mut total = 0i64;
     let Ok(entries) = fs::read_dir(path) else {
@@ -28,6 +31,8 @@ pub fn dir_size(path: &Path) -> i64 {
     total
 }
 
+/// First file named `name` found in `$PATH`.
+#[must_use]
 pub fn which(name: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
     env::split_paths(&path)
@@ -35,10 +40,14 @@ pub fn which(name: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+/// Remove `path` recursively, ignoring any error.
 pub fn remove_tree_ignore(path: &Path) {
     let _ = fs::remove_dir_all(path);
 }
 
+/// External commands a storage backend needs, as `(name, required)` pairs.
+/// `dpkg` is always required; `gdrive` additionally requires `rclone`.
+#[must_use]
 pub fn required_tools(storage: &str) -> Vec<(&'static str, bool)> {
     let mut tools = vec![("dpkg", true)];
     if storage == "gdrive" {
@@ -47,6 +56,9 @@ pub fn required_tools(storage: &str) -> Vec<(&'static str, bool)> {
     tools
 }
 
+/// Take an exclusive advisory lock on `path`, creating it with mode 0600 if
+/// needed. The lock is held until the returned file is dropped and fails with
+/// [`CoreError::User`] if another daemon already holds it.
 pub fn try_lock_exclusive(path: &Path) -> Result<File, CoreError> {
     let file = OpenOptions::new()
         .create(true)

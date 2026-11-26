@@ -39,6 +39,7 @@ pub enum Codec {
 
 impl Codec {
     /// Map a configuration string to a codec; anything unknown falls back to [`Codec::Gz`].
+    #[must_use]
     pub fn parse(compression: &str) -> Self {
         match compression {
             "bz2" => Self::Bz2,
@@ -48,6 +49,7 @@ impl Codec {
     }
 
     /// File-name extension without the leading dot (`gz`, `bz2`, `xz`).
+    #[must_use]
     pub fn extension(self) -> &'static str {
         match self {
             Self::Gz => "gz",
@@ -93,6 +95,7 @@ const SIZE_LIMIT_ERROR: &str = "Archive exceeds size limit";
 /// True when an extraction warning is benign enough to keep restoring. Device and
 /// FIFO entries are deliberately archived but skipped on extraction; every other
 /// warning (escape, traversal, unreadable member, failed write) is fatal.
+#[must_use]
 pub fn is_ignorable_warning(warning: &str) -> bool {
     warning.starts_with("Refusing device/fifo entry")
 }
@@ -186,6 +189,7 @@ fn relock(changed: Vec<(PathBuf, u32)>) {
 
 /// Give `archive_path` the suffix for `codec`, replacing any other archive
 /// suffix. Returns the path unchanged when it already ends with the wanted one.
+#[must_use]
 pub fn archive_path_for(archive_path: &Path, codec: Codec) -> PathBuf {
     let ext = format!(".tar.{}", codec.extension());
     if archive_path.to_string_lossy().ends_with(&ext) {
@@ -193,8 +197,7 @@ pub fn archive_path_for(archive_path: &Path, codec: Codec) -> PathBuf {
     }
     let mut stem = archive_path
         .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_default(|name| name.to_string_lossy().into_owned());
     for old in [".tar.gz", ".tar.bz2", ".tar.xz", ".tar"] {
         if let Some(rest) = stem.strip_suffix(old) {
             stem = rest.to_string();
@@ -288,8 +291,7 @@ fn fill_archive<W: Write>(
     let excludes = wrapped_excludes(&options.excludes);
     let root_name = source
         .file_name()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("root"));
+        .map_or_else(|| PathBuf::from("root"), PathBuf::from);
     let mut seen: HashMap<(u64, u64), PathBuf> = HashMap::new();
     let mut stack = vec![(source.to_path_buf(), root_name)];
     while let Some((path, arc)) = stack.pop() {
@@ -348,12 +350,11 @@ fn fill_archive<W: Write>(
             if meta.nlink() > 1 {
                 seen.insert(key, arc.clone());
             }
-            let mut file = match File::open(&path) {
-                Ok(file) => file,
-                Err(_) => {
-                    unlock_tree(&path, &options.excludes, guard);
-                    File::open(&path).map_err(CoreError::os)?
-                }
+            let mut file = if let Ok(file) = File::open(&path) {
+                file
+            } else {
+                unlock_tree(&path, &options.excludes, guard);
+                File::open(&path).map_err(CoreError::os)?
             };
             builder
                 .append_file(&arc, &mut file)
@@ -855,7 +856,7 @@ mod tests {
         let result =
             extract_archive(&archive_path, &dest, Some("home"), None, &mut |_| {}).unwrap();
         assert!(!dest.join("other/file.txt").exists());
-        assert!(!result.warnings.is_empty());
+        assert_ne!(result.warnings, [] as [std::string::String; 0]);
     }
 
     #[test]
@@ -944,7 +945,7 @@ mod tests {
         builder.finish().unwrap();
         let result = extract_archive(&archive, &dest, Some("home"), None, &mut |_| {}).unwrap();
         assert!(dest.join("home/keep.txt").exists());
-        assert!(!result.warnings.is_empty());
+        assert_ne!(result.warnings, [] as [std::string::String; 0]);
     }
 
     #[test]

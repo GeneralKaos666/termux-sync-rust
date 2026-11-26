@@ -1,6 +1,6 @@
 //! Interactive terminal dashboard for `termux-sync`.
 //!
-//! [`run`] drives the event loop; [`app::App`] holds the state and key
+//! `run` drives the event loop; [`app::App`] holds the state and key
 //! handling, [`ops`] owns the child process and event protocol, [`data`] reads
 //! local state, and [`ui`] renders frames.
 
@@ -36,7 +36,7 @@ const IDLE_TIME: Duration = Duration::from_millis(1_000);
 
 /// Runs the dashboard, returning the exit code the caller should propagate.
 ///
-/// The no-terminal case is reported as [`ExitCode::from(2)`] instead of
+/// The no-terminal case is reported as `ExitCode::from(2)` instead of
 /// terminating the process, so callers keep control of process exit.
 pub fn main_entry(program: &str, args: &[String]) -> io::Result<ExitCode> {
     if args.iter().any(|arg| arg == "--version" || arg == "-V") {

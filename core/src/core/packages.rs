@@ -7,6 +7,7 @@ use crate::core::errors::CoreError;
 use crate::core::events;
 use crate::core::logging;
 
+/// Installed dpkg packages, one name per entry, in `dpkg --get-selections` order.
 pub fn installed_packages() -> Result<Vec<String>, CoreError> {
     installed_packages_with(Path::new("dpkg"))
 }
@@ -37,13 +38,15 @@ fn valid_name(package: &str) -> bool {
     package
         .chars()
         .next()
-        .map(|ch| ch.is_ascii_alphanumeric())
-        .unwrap_or(false)
+        .is_some_and(|ch| ch.is_ascii_alphanumeric())
         && package
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '.' | '_' | '-'))
 }
 
+/// Reinstall `packages` one by one with `pkg install -y`, emitting a `progress`
+/// event per package. Returns the names that failed or were rejected as invalid.
+#[must_use]
 pub fn install(packages: &[String]) -> Vec<String> {
     if packages.is_empty() {
         return Vec::new();
@@ -72,8 +75,7 @@ pub fn install(packages: &[String]) -> Vec<String> {
         let ok = Command::new("pkg")
             .args(["install", "-y", "--", package])
             .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false);
+            .is_ok_and(|output| output.status.success());
         if !ok {
             failed.push(package.clone());
         }

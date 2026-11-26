@@ -18,12 +18,14 @@ use crate::core::manifest;
 use crate::core::paths;
 use crate::core::text;
 
+/// Size of one upload part: 200 MiB, the most GitHub accepts per asset.
 pub const CHUNK_SIZE: u64 = 200 * 1024 * 1024;
 const API: &str = "https://api.github.com";
 const UPLOAD: &str = "https://uploads.github.com";
 const MAX_RETRIES: u32 = 8;
 
 /// True when `value` is exactly two non-empty `[A-Za-z0-9_.-]` segments with no `..`.
+#[must_use]
 pub fn valid_repo(value: &str) -> bool {
     let segments: Vec<&str> = value.split('/').collect();
     segments.len() == 2
@@ -37,6 +39,7 @@ pub fn valid_repo(value: &str) -> bool {
 }
 
 /// Percent-encode everything outside `A-Z a-z 0-9 - . _ ~` with uppercase hex.
+#[must_use]
 pub fn encode_segment(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -98,6 +101,7 @@ struct StreamState {
     work_dir: PathBuf,
 }
 
+/// Backend that stores each backup as a GitHub Release with one asset per file.
 #[derive(Clone)]
 pub struct GitHubStorage {
     token: String,
@@ -122,12 +126,11 @@ fn agent() -> ureq::Agent {
 }
 
 impl GitHubStorage {
+    /// Build from config. Requires `github_token` and an `owner/name` `github_repo`;
+    /// `github_branch` defaults to `main`.
     pub fn new(cfg: &Value) -> Result<Self, CoreError> {
-        let token = cfg
-            .get("github_token")
-            .map(text::py_str)
-            .unwrap_or_default();
-        let repo = cfg.get("github_repo").map(text::py_str).unwrap_or_default();
+        let token = cfg.get("github_token").map_or_default(text::py_str);
+        let repo = cfg.get("github_repo").map_or_default(text::py_str);
         let branch = cfg
             .get("github_branch")
             .map(text::py_str)
@@ -207,21 +210,19 @@ impl GitHubStorage {
         let msg = parsed
             .as_ref()
             .and_then(|value| value.get("message"))
-            .map(text::py_str)
-            .unwrap_or_else(|| raw.trim().chars().take(300).collect());
+            .map_or_else(|| raw.trim().chars().take(300).collect(), text::py_str);
         let extras = parsed
             .as_ref()
             .and_then(|value| value.get("errors"))
             .and_then(Value::as_array)
-            .map(|items| {
+            .map_or_default(|items| {
                 items
                     .iter()
                     .filter_map(|item| item.get("message"))
                     .map(text::py_str)
                     .collect::<Vec<_>>()
                     .join("; ")
-            })
-            .unwrap_or_default();
+            });
         let blob = format!("{msg} {extras}").to_lowercase();
         if matches!(code, 409 | 422) && blob.contains("empty") {
             return CoreError::user(format!(
@@ -266,6 +267,7 @@ impl GitHubStorage {
         }
     }
 
+    /// Confirm the repository and its commit history are readable with the token.
     pub fn preflight(&self) -> Result<(), CoreError> {
         self.api("GET", &format!("/repos/{}", self.repo), None)?;
         self.api(
@@ -365,8 +367,7 @@ impl GitHubStorage {
         }
         let name = src
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .map_or_default(|name| name.to_string_lossy().into_owned());
         let mut file = File::open(src).map_err(CoreError::os)?;
         let mut chunks = Vec::new();
         let mut index = 0u32;
@@ -391,11 +392,11 @@ impl GitHubStorage {
         Ok(chunks)
     }
 
+    /// Upload one file as a release asset, retrying transient failures.
     pub fn upload_asset(&self, release_id: i64, path: &Path) -> Result<(), CoreError> {
         let name = path
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .map_or_default(|name| name.to_string_lossy().into_owned());
         let size = fs::metadata(path).map_err(CoreError::os)?.len();
         let url = format!("{UPLOAD}/repos/{}/releases/{release_id}/assets", self.repo);
         let mut last_error = String::new();
@@ -411,14 +412,14 @@ impl GitHubStorage {
                 .header("Content-Type", "application/octet-stream")
                 .header("Content-Length", &size.to_string())
                 .config()
-                .timeout_send_body(Some(Duration::from_secs(6 * 3600)))
+                .timeout_send_body(Some(Duration::from_hours(6)))
                 .build()
                 .send(ureq::SendBody::from_reader(&mut reader));
             let response = match response {
                 Ok(response) => response,
                 Err(error) => {
                     last_error = format!("{error}");
-                    std::thread::sleep(Duration::from_secs(15 * (attempt as u64 + 1)));
+                    std::thread::sleep(Duration::from_secs(15 * (u64::from(attempt) + 1)));
                     continue;
                 }
             };
@@ -457,7 +458,7 @@ impl GitHubStorage {
             }
             if status >= 500 || status == 429 {
                 last_error = body;
-                std::thread::sleep(Duration::from_secs(15 * (attempt as u64 + 1)));
+                std::thread::sleep(Duration::from_secs(15 * (u64::from(attempt) + 1)));
                 continue;
             }
             return Err(self.http_error(status, &body));
@@ -484,27 +485,26 @@ impl GitHubStorage {
         releases_from_response(status, &body)
     }
 
+    /// Create a release for `backup_name` and upload every file in `backup_dir`,
+    /// splitting large archives into [`CHUNK_SIZE`] assets. Returns the release
+    /// page URL.
     pub fn upload(&self, backup_dir: &Path, backup_name: &str) -> Result<String, CoreError> {
         let release = self.release_for(backup_name)?;
         let release_id = release
             .get("id")
             .and_then(Value::as_i64)
             .ok_or_else(|| CoreError::runtime("GitHub release has no id"))?;
-        let html_url = release
-            .get("html_url")
-            .map(text::py_str)
-            .unwrap_or_default();
+        let html_url = release.get("html_url").map_or_default(text::py_str);
         let existing: Vec<String> = release
             .get("assets")
             .and_then(Value::as_array)
-            .map(|items| {
+            .map_or_default(|items| {
                 items
                     .iter()
                     .filter_map(|item| item.get("name"))
                     .map(text::py_str)
                     .collect()
-            })
-            .unwrap_or_default();
+            });
         let split_dir = paths::tmp_root().join(format!("termux-sync-split-{backup_name}"));
         fs::create_dir_all(&split_dir).map_err(CoreError::os)?;
         let mut files: Vec<PathBuf> = fs::read_dir(backup_dir)
@@ -519,8 +519,7 @@ impl GitHubStorage {
                 for chunk in self.split_file(&file, &split_dir)? {
                     let name = chunk
                         .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_default();
+                        .map_or_default(|name| name.to_string_lossy().into_owned());
                     if existing.contains(&name) {
                         continue;
                     }
@@ -534,6 +533,8 @@ impl GitHubStorage {
         Ok(html_url)
     }
 
+    /// Create the release for `backup_name` and prepare streaming upload into
+    /// `work_dir`, which must hold at least one full part of free space.
     pub fn begin_stream(&mut self, backup_name: &str, work_dir: &Path) -> Result<(), CoreError> {
         fs::create_dir_all(work_dir).map_err(CoreError::os)?;
         let need = (CHUNK_SIZE as f64 * 1.2) as u64;
@@ -557,6 +558,8 @@ impl GitHubStorage {
         Ok(())
     }
 
+    /// Writer that streams bytes into parts named from `base_name` and uploads
+    /// each part as it fills.
     pub fn stream_sink(&self, base_name: &str) -> Result<PartWriter, CoreError> {
         let stream = self
             .stream
@@ -570,10 +573,13 @@ impl GitHubStorage {
         ))
     }
 
+    /// Delete the partially created release for `backup_name`, ignoring errors.
     pub fn abort_stream(&self, backup_name: &str) {
         let _ = self.delete_backup(backup_name);
     }
 
+    /// Manifest of `backup_name`, found by matching release tags; `None` if no
+    /// release of that name exists.
     pub fn fetch_manifest(&self, backup_name: &str) -> Result<Option<Value>, CoreError> {
         let name = manifest::clean_backup_name(backup_name);
         Ok(self.list_backups()?.into_iter().find(|manifest| {
@@ -581,14 +587,12 @@ impl GitHubStorage {
         }))
     }
 
+    /// Manifests of every release tagged `termux_backup_*`.
     pub fn list_backups(&self) -> Result<Vec<Value>, CoreError> {
         let releases = self.list_releases()?;
         let mut backups = Vec::new();
         for release in releases {
-            let tag = release
-                .get("tag_name")
-                .map(text::py_str)
-                .unwrap_or_default();
+            let tag = release.get("tag_name").map_or_default(text::py_str);
             if !tag.starts_with("termux_backup_") {
                 continue;
             }
@@ -608,7 +612,7 @@ impl GitHubStorage {
             backups.push(manifest_value.unwrap_or_else(|| {
                 json!({
                     "name": tag,
-                    "date": release.get("created_at").map(text::py_str).unwrap_or_default(),
+                    "date": release.get("created_at").map_or_default(text::py_str),
                     "label": "",
                 })
             }));
@@ -655,7 +659,7 @@ impl GitHubStorage {
                 Ok(response) => response,
                 Err(error) => {
                     last_error = format!("{error}");
-                    std::thread::sleep(Duration::from_secs(15 * (attempt as u64 + 1)));
+                    std::thread::sleep(Duration::from_secs(15 * (u64::from(attempt) + 1)));
                     continue;
                 }
             };
@@ -666,7 +670,7 @@ impl GitHubStorage {
                     return Err(self.http_error(status, &text));
                 }
                 last_error = self.http_error(status, &text).to_string();
-                std::thread::sleep(Duration::from_secs(15 * (attempt as u64 + 1)));
+                std::thread::sleep(Duration::from_secs(15 * (u64::from(attempt) + 1)));
                 continue;
             }
             let mut file = File::create(out).map_err(CoreError::os)?;
@@ -675,7 +679,7 @@ impl GitHubStorage {
                 Ok(bytes) => return Ok(bytes),
                 Err(error) => {
                     last_error = format!("{error}");
-                    std::thread::sleep(Duration::from_secs(15 * (attempt as u64 + 1)));
+                    std::thread::sleep(Duration::from_secs(15 * (u64::from(attempt) + 1)));
                 }
             }
         }
@@ -684,6 +688,8 @@ impl GitHubStorage {
         )))
     }
 
+    /// Download every asset of the release for `backup_name` into `dest`,
+    /// reassembling `.partNNNN` assets into their original file.
     pub fn download(&self, backup_name: &str, dest: &Path) -> Result<(), CoreError> {
         let release = self.get_release_by_tag(backup_name)?.ok_or_else(|| {
             CoreError::runtime(format!("No GitHub Release found for tag: {backup_name}"))
@@ -694,7 +700,7 @@ impl GitHubStorage {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        assets.sort_by_key(|asset| asset.get("name").map(text::py_str).unwrap_or_default());
+        assets.sort_by_key(|asset| asset.get("name").map_or_default(text::py_str));
         let total: u64 = assets
             .iter()
             .filter_map(|asset| asset.get("size").and_then(Value::as_u64))
@@ -706,7 +712,7 @@ impl GitHubStorage {
             let Some(id) = asset.get("id").and_then(Value::as_i64) else {
                 continue;
             };
-            let name = asset.get("name").map(text::py_str).unwrap_or_default();
+            let name = asset.get("name").map_or_default(text::py_str);
             if manifest::clean_backup_name(&name) != name {
                 return Err(CoreError::runtime(format!(
                     "Unsafe asset name in release: {name:?}"
@@ -730,6 +736,7 @@ impl GitHubStorage {
         Ok(())
     }
 
+    /// Delete the oldest backup releases beyond `max_keep` (at least 1).
     pub fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
         let mut releases: Vec<Value> = self
             .list_releases()?
@@ -738,29 +745,20 @@ impl GitHubStorage {
                 release
                     .get("tag_name")
                     .map(text::py_str)
-                    .map(|tag| {
+                    .is_some_and(|tag| {
                         tag.starts_with("termux_backup_") && manifest::valid_backup_name(&tag)
                     })
-                    .unwrap_or(false)
             })
             .collect();
         releases.sort_by_key(|release| {
-            std::cmp::Reverse(
-                release
-                    .get("created_at")
-                    .map(text::py_str)
-                    .unwrap_or_default(),
-            )
+            std::cmp::Reverse(release.get("created_at").map_or_default(text::py_str))
         });
         let keep = max_keep.max(1) as usize;
         for release in releases.into_iter().skip(keep) {
             let Some(id) = release.get("id").and_then(Value::as_i64) else {
                 continue;
             };
-            let tag = release
-                .get("tag_name")
-                .map(text::py_str)
-                .unwrap_or_default();
+            let tag = release.get("tag_name").map_or_default(text::py_str);
             self.api(
                 "DELETE",
                 &format!("/repos/{}/releases/{id}", self.repo),
@@ -780,6 +778,7 @@ impl GitHubStorage {
         Ok(())
     }
 
+    /// Delete the release and its `termux_backup_` tag for `backup_name`.
     pub fn delete_backup(&self, backup_name: &str) -> Result<(), CoreError> {
         let release = self.get_release_by_tag(backup_name)?.ok_or_else(|| {
             CoreError::file_not_found(format!(
@@ -804,6 +803,8 @@ impl GitHubStorage {
     }
 }
 
+/// Asset name for part `index` of `base`: `<base>.part0000`, `.part0001`, ...
+#[must_use]
 pub fn part_name(base: &str, index: u32) -> String {
     format!("{base}.part{index:04}")
 }
@@ -844,10 +845,14 @@ impl PartWriter {
         }
     }
 
+    /// Bytes written through this writer so far, across all parts.
+    #[must_use]
     pub fn total(&self) -> u64 {
         self.total
     }
 
+    /// Running SHA-256 of everything written, as lowercase hex.
+    #[must_use]
     pub fn hexdigest(&self) -> String {
         format!("{:x}", self.hasher.clone().finalize())
     }
@@ -874,6 +879,7 @@ impl PartWriter {
         Ok(())
     }
 
+    /// Flush the last part, then return the total bytes written and the SHA-256.
     pub fn finish(mut self) -> Result<(u64, String), CoreError> {
         if self.file.is_some() {
             self.flush_part(true)
@@ -883,6 +889,7 @@ impl PartWriter {
         Ok((self.total, digest))
     }
 
+    /// Discard the buffered part without uploading it.
     pub fn abort(&mut self) {
         self.file = None;
         if let Some(path) = self.path.take() {

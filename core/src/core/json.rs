@@ -6,6 +6,8 @@ use std::path::Path;
 use crate::core::errors::CoreError;
 use serde_json::Value;
 
+/// Read and parse a JSON file, tolerating a UTF-8 BOM. Decode failures become
+/// [`CoreError::JsonDecode`] with line and column information.
 pub fn read_json(path: &Path) -> Result<Value, CoreError> {
     let bytes = fs::read(path).map_err(CoreError::os)?;
     let bytes = strip_utf8_bom(&bytes).to_vec();
@@ -23,6 +25,8 @@ pub fn read_json(path: &Path) -> Result<Value, CoreError> {
     })
 }
 
+/// Remove a leading UTF-8 byte-order mark, if present.
+#[must_use]
 pub fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
     bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes)
 }
@@ -33,6 +37,8 @@ pub fn to_string_pretty_ascii(value: &Value) -> Result<String, CoreError> {
     Ok(escape_non_ascii(&text))
 }
 
+/// Serialise `value` as indented JSON and write it to `path` with ASCII-only
+/// escaping, matching Python's `json.dump` defaults.
 pub fn write_json_pretty_ascii(path: &Path, value: &Value) -> Result<(), CoreError> {
     let text = to_string_pretty_ascii(value)?;
     fs::write(path, text).map_err(CoreError::os)

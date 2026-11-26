@@ -1,3 +1,4 @@
+//! End-to-end CLI tests against a temporary HOME/PREFIX fixture.
 use std::ffi::OsString;
 use std::fs;
 use std::io::Cursor;

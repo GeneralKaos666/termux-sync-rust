@@ -1,3 +1,4 @@
+//! Smoke test for status, logs and config export/import.
 use termux_sync_core::core::errors::CoreError;
 use termux_sync_core::core::{config, maintenance};
 

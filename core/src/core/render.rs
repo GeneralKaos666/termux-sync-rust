@@ -78,6 +78,8 @@ fn canonical_line(line: &str) -> String {
     out
 }
 
+/// Print one line of Rich-markup text after stripping tags and box characters.
+/// Output goes to stderr when events are enabled so stdout stays JSON-only.
 pub fn print_line(text: &str) {
     let text = canonical_line(text);
     if text.is_empty() {
@@ -92,6 +94,8 @@ pub fn print_line(text: &str) {
     }
 }
 
+/// Write `text` verbatim without stripping or adding a newline, to stderr while
+/// events are enabled and to stdout otherwise.
 pub fn print_raw(text: &str) {
     if events::enabled() {
         let mut stream = std::io::stderr().lock();
@@ -108,6 +112,8 @@ fn centered(text: &str, width: usize) -> String {
     format!("{}{text}", " ".repeat(pad))
 }
 
+/// Print the ASCII-art banner when the terminal is wide enough, else a centred
+/// wordmark, followed by the version and project lines.
 pub fn print_banner() {
     let width = term::width();
     let art_width = BANNER
@@ -135,10 +141,13 @@ pub fn print_banner() {
     print_line("");
 }
 
+/// Print an indented informational line.
 pub fn note(text: &str) {
     print_line(&format!("  {text}"));
 }
 
+/// Print a section header with `title` centred between rules, then an optional
+/// subtitle.
 pub fn print_section(title: &str, subtitle: &str) {
     let width = term::width();
     let label = format!(" {title} ");
@@ -158,6 +167,8 @@ pub fn print_section(title: &str, subtitle: &str) {
     print_line("");
 }
 
+/// Print the boxed error card shown before a command exits with a failure.
+/// `r#where` and `hint` are omitted when empty.
 pub fn print_error(title: &str, message: &str, hint: &str, r#where: &str) {
     let width = term::width().clamp(40, 100);
     print_line("");
@@ -213,16 +224,14 @@ pub fn print_error(title: &str, message: &str, hint: &str, r#where: &str) {
     print_line("");
 }
 
+/// Print the backup table, or a one-entry-per-block layout on narrow terminals.
 pub fn print_backup_list(backups: &[Value], title: &str) {
     print_line("");
     print_line(&format!("  {title}"));
     print_line("");
     if fmt::is_narrow() {
         for (index, backup) in backups.iter().enumerate() {
-            let name = backup
-                .get("name")
-                .map(py_str)
-                .unwrap_or_else(|| "—".to_string());
+            let name = backup.get("name").map_or_else(|| "—".to_string(), py_str);
             print_line(&format!("  {:>2}  {name}", index + 1));
             let mut bits = vec![fmt::backup_date(backup)];
             if let Some(packages) = backup.get("packages").and_then(Value::as_array)
@@ -248,16 +257,12 @@ pub fn print_backup_list(backups: &[Value], title: &str) {
         "#", "Name", "Date", "Pkgs", "Size", "Label"
     ));
     for (index, backup) in backups.iter().enumerate() {
-        let name = backup
-            .get("name")
-            .map(py_str)
-            .unwrap_or_else(|| "—".to_string());
+        let name = backup.get("name").map_or_else(|| "—".to_string(), py_str);
         let date = fmt::backup_date(backup);
         let packages = backup
             .get("packages")
             .and_then(Value::as_array)
-            .map(|items| items.len().to_string())
-            .unwrap_or_else(|| "—".to_string());
+            .map_or_else(|| "—".to_string(), |items| items.len().to_string());
         let size = fmt::backup_size(backup);
         let size = if size == 0 {
             "—".to_string()
@@ -278,6 +283,9 @@ pub fn print_backup_list(backups: &[Value], title: &str) {
     print_line("");
 }
 
+/// Ask a yes/no question on stdin. An empty answer takes `default`; unreadable
+/// input counts as no.
+#[must_use]
 pub fn confirm(prompt: &str, default: bool) -> bool {
     print_line(&format!("  {prompt} [y/N]"));
     let mut line = String::new();
@@ -292,6 +300,8 @@ pub fn confirm(prompt: &str, default: bool) -> bool {
     }
 }
 
+/// Prompt for a line of input, showing `default` when non-empty and returning it
+/// for an empty answer. Closed stdin is an error.
 pub fn ask(prompt: &str, default: &str) -> Result<String, CoreError> {
     let shown = if default.is_empty() {
         format!("  {prompt}: ")
@@ -313,6 +323,7 @@ pub fn ask(prompt: &str, default: &str) -> Result<String, CoreError> {
     }
 }
 
+/// Print the banner and the full command reference.
 pub fn print_help() {
     print_banner();
     print_line("Usage: termux-sync <command> [target] [options]");

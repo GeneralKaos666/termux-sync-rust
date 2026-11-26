@@ -24,15 +24,14 @@ use crate::core::text;
 
 static DEBUG: AtomicBool = AtomicBool::new(false);
 
+/// Enable or disable verbose debug output for the process.
 pub fn set_debug(enabled: bool) {
     DEBUG.store(enabled, Ordering::Relaxed);
 }
 
 fn debug_enabled() -> bool {
     DEBUG.load(Ordering::Relaxed)
-        || env::var("TERMUX_SYNC_DEBUG")
-            .map(|value| !value.is_empty())
-            .unwrap_or(false)
+        || env::var("TERMUX_SYNC_DEBUG").is_ok_and(|value| !value.is_empty())
 }
 
 fn cfg_string(cfg: &Value, key: &str, default: &str) -> String {
@@ -49,6 +48,7 @@ fn map_string(map: &Map<String, Value>, key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
+/// Delete one backup after confirmation, or list choices when no name is given.
 pub fn delete(cfg: &Value, backup_name: &str, assume_yes: bool) -> Result<Value, CoreError> {
     render::print_section(
         "DELETE BACKUP",
@@ -78,10 +78,7 @@ pub fn delete(cfg: &Value, backup_name: &str, assume_yes: bool) -> Result<Value,
                 render::print_line(&format!("  Invalid number. Enter 1-{}.", backups.len()));
                 return Ok(Value::Null);
             }
-            name = backups[index - 1]
-                .get("name")
-                .map(text::py_str)
-                .unwrap_or_default();
+            name = backups[index - 1].get("name").map_or_default(text::py_str);
         } else {
             name = choice;
         }
@@ -114,6 +111,7 @@ pub fn delete(cfg: &Value, backup_name: &str, assume_yes: bool) -> Result<Value,
     Ok(Value::Null)
 }
 
+/// Read `cron.json`, falling back to a disabled default schedule.
 pub fn load_schedule() -> Result<Value, CoreError> {
     let file = paths::cron_file();
     if !file.exists() {
@@ -179,11 +177,13 @@ fn schedule_int(
     Ok(number)
 }
 
+/// Write `cron.json` with private (0600) permissions.
 pub fn save_schedule(sched: &Value) -> Result<(), CoreError> {
     fs::create_dir_all(paths::config_dir()).map_err(CoreError::os)?;
     pyjson::write_json_private(&paths::cron_file(), sched)
 }
 
+/// Interactive storage configuration wizard; saves the result.
 pub fn setup() -> Result<Value, CoreError> {
     render::print_banner();
     render::print_section("SETUP", "Configure termux-sync storage and preferences");
@@ -397,6 +397,7 @@ fn write_daemon_script(enabled: bool) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Interactive editor for the automatic backup schedule.
 pub fn schedule() -> Result<Value, CoreError> {
     render::print_banner();
     render::print_section("AUTO-BACKUP", "Schedule automatic backups");
@@ -416,8 +417,7 @@ pub fn schedule() -> Result<Value, CoreError> {
     let enable = render::confirm("Enable auto-backup?", enabled);
     let label_default = sched
         .get("label")
-        .map(text::py_str)
-        .unwrap_or_else(|| "auto".to_string());
+        .map_or_else(|| "auto".to_string(), text::py_str);
     let map = sched
         .as_object_mut()
         .ok_or_else(|| CoreError::user("Invalid cron.json"))?;
@@ -466,6 +466,7 @@ pub fn schedule() -> Result<Value, CoreError> {
     Ok(Value::Null)
 }
 
+/// Run due scheduled backups until auto-backup is disabled.
 pub fn daemon(_cfg: &Value) -> Result<Value, CoreError> {
     let _lock = fsutil::try_lock_exclusive(&paths::config_dir().join("cron.lock"))?;
     let mut sched = match load_schedule() {
@@ -526,14 +527,14 @@ pub fn daemon(_cfg: &Value) -> Result<Value, CoreError> {
             &cfg,
             &sched
                 .get("label")
-                .map(text::py_str)
-                .unwrap_or_else(|| "auto".to_string()),
+                .map_or_else(|| "auto".to_string(), text::py_str),
         ) {
             logging::log("ERROR", &format!("Daemon backup failed: {error}"));
         }
     }
 }
 
+/// Print the current configuration and environment summary.
 pub fn status(cfg: &Value) -> Result<Value, CoreError> {
     render::print_section("STATUS", "Current configuration and environment");
     let sched = load_schedule().unwrap_or_else(|_| json!({"enabled": false}));
@@ -566,8 +567,7 @@ pub fn status(cfg: &Value) -> Result<Value, CoreError> {
     render::print_line(&format!(
         "  Max backups      {}",
         cfg.get("max_backups")
-            .map(text::py_str)
-            .unwrap_or_else(|| "5".to_string())
+            .map_or_else(|| "5".to_string(), text::py_str)
     ));
     render::print_line(&format!(
         "  Auto-backup      {}",
@@ -628,6 +628,7 @@ pub fn status(cfg: &Value) -> Result<Value, CoreError> {
     Ok(Value::Null)
 }
 
+/// Print the last `lines` entries of the log file.
 pub fn logs(lines: i64) -> Result<Value, CoreError> {
     render::print_section("LOGS", &paths::log_file().to_string_lossy());
     let file = paths::log_file();
@@ -660,6 +661,7 @@ pub fn logs(lines: i64) -> Result<Value, CoreError> {
     Ok(Value::Null)
 }
 
+/// Clear the log file after confirmation.
 pub fn clear_logs(assume_yes: bool) -> Result<Value, CoreError> {
     render::print_section("CLEAR LOGS", &paths::log_file().to_string_lossy());
     let file = paths::log_file();
@@ -667,7 +669,7 @@ pub fn clear_logs(assume_yes: bool) -> Result<Value, CoreError> {
         render::print_line("  Log file does not exist — nothing to clear.");
         return Ok(Value::Null);
     }
-    let size = fs::metadata(&file).map(|meta| meta.len()).unwrap_or(0);
+    let size = fs::metadata(&file).map_or(0, |meta| meta.len());
     render::print_line(&format!("  Log file : {}", file.display()));
     render::print_line(&format!("  Size     : {}", fmt::human_size(size as i64)));
     if !assume_yes && !render::confirm("Clear all log entries?", false) {
@@ -705,6 +707,7 @@ fn check_paths(target: &str) -> Vec<(String, PathBuf)> {
     }
 }
 
+/// Print a disk-usage report for `target`.
 pub fn check(target: &str) -> Result<Value, CoreError> {
     render::print_section("DISK CHECK", "Storage usage overview");
     let paths = check_paths(target);
@@ -712,8 +715,7 @@ pub fn check(target: &str) -> Result<Value, CoreError> {
         let missing = paths
             .iter()
             .find(|(_, path)| !path.exists())
-            .map(|(_, path)| path.display().to_string())
-            .unwrap_or_default();
+            .map_or_default(|(_, path)| path.display().to_string());
         render::print_line(&format!("  Path not found: {missing}"));
         return Ok(Value::Null);
     }
@@ -760,9 +762,7 @@ fn check_subdirs(path: &Path, parent_total: i64) {
             let size = if path.is_dir() {
                 fsutil::dir_size(&path)
             } else {
-                fs::metadata(&path)
-                    .map(|meta| meta.len() as i64)
-                    .unwrap_or(0)
+                fs::metadata(&path).map_or(0, |meta| meta.len() as i64)
             };
             (path, size)
         })
@@ -779,8 +779,7 @@ fn check_subdirs(path: &Path, parent_total: i64) {
             "  {icon} {:<24} {}  {}",
             child
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+                .map_or_default(|name| name.to_string_lossy().into_owned()),
             fmt::human_size(size),
             fmt::pct_bar(size, parent_total, 24)
         ));
@@ -806,6 +805,7 @@ fn cache_targets() -> Vec<(&'static str, PathBuf)> {
     ]
 }
 
+/// Remove selected cache directories after confirmation.
 pub fn clear_cache(assume_yes: bool) -> Result<Value, CoreError> {
     render::print_section("CLEAR CACHE", "Remove temporary and cached files");
     let existing: Vec<(&str, PathBuf, i64)> = cache_targets()
@@ -936,6 +936,7 @@ fn ensure_not_live_config(out: &Path) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Export the config with secrets redacted; refuses to overwrite the live file.
 pub fn export_config(output_path: &str) -> Result<Value, CoreError> {
     render::print_section("EXPORT CONFIG", "Save configuration to a file");
     let cfg = config::load_config()?;
@@ -977,6 +978,7 @@ pub fn export_config(output_path: &str) -> Result<Value, CoreError> {
     Ok(Value::Null)
 }
 
+/// Read, validate and merge a config patch into the live config.
 pub fn import_config(input_path: &str) -> Result<Value, CoreError> {
     render::print_section("IMPORT CONFIG", "Load configuration from a file");
     let path = if input_path.is_empty() {

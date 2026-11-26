@@ -1,3 +1,4 @@
+//! Recorded trycmd cases for the CLI binary.
 #[test]
 fn recorded_cases() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");

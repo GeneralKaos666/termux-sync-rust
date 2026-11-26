@@ -12,6 +12,7 @@ use crate::core::events;
 use crate::core::manifest;
 use crate::core::text;
 
+/// Backend that stores backups in Google Drive through the `rclone` binary.
 pub struct RcloneStorage {
     folder_id: String,
     remote: String,
@@ -19,13 +20,13 @@ pub struct RcloneStorage {
 }
 
 impl RcloneStorage {
+    /// Name of the rclone remote this backend creates and uses.
     pub const REMOTE: &'static str = "termux-sync-gdrive";
 
+    /// Build from config: `gdrive_folder_id` sets the destination folder, and the
+    /// remote defaults to [`Self::REMOTE`].
     pub fn new(cfg: &Value) -> Result<Self, CoreError> {
-        let folder_id = cfg
-            .get("gdrive_folder_id")
-            .map(text::py_str)
-            .unwrap_or_default();
+        let folder_id = cfg.get("gdrive_folder_id").map_or_default(text::py_str);
         if !valid_folder_id(&folder_id) {
             return Err(CoreError::user(format!(
                 "Invalid Google Drive folder ID: {folder_id:?}"
@@ -81,6 +82,8 @@ impl RcloneStorage {
         Err(command_error(&output))
     }
 
+    /// Copy `backup_dir` to the remote under `backup_name` and return the remote
+    /// path used.
     pub fn upload(&self, backup_dir: &Path, backup_name: &str) -> Result<String, CoreError> {
         let remote = self.remote_path(backup_name);
         self.run(&[
@@ -103,6 +106,8 @@ impl RcloneStorage {
         Ok(remote)
     }
 
+    /// Read `manifest.json` for `backup_name` from the remote; `None` when the
+    /// name is invalid, the file is missing or it does not parse.
     pub fn fetch_manifest(&self, backup_name: &str) -> Result<Option<Value>, CoreError> {
         let name = manifest::clean_backup_name(backup_name);
         if name.is_empty() {
@@ -119,6 +124,8 @@ impl RcloneStorage {
         }
     }
 
+    /// List the directories under the remote root and turn each into a manifest,
+    /// falling back to a name and date entry when its manifest cannot be read.
     pub fn list_backups(&self) -> Result<Vec<Value>, CoreError> {
         let output = self.run(&["lsjson", &self.remote_path(""), "--dirs-only"])?;
         let items: Value = serde_json::from_slice(&output.stdout).map_err(CoreError::runtime)?;
@@ -129,13 +136,13 @@ impl RcloneStorage {
         };
         let mut sorted = items.clone();
         sorted.sort_by(|left, right| {
-            let left = left.get("ModTime").map(text::py_str).unwrap_or_default();
-            let right = right.get("ModTime").map(text::py_str).unwrap_or_default();
+            let left = left.get("ModTime").map_or_default(text::py_str);
+            let right = right.get("ModTime").map_or_default(text::py_str);
             right.cmp(&left)
         });
         let mut backups = Vec::new();
         for item in sorted {
-            let name = item.get("Name").map(text::py_str).unwrap_or_default();
+            let name = item.get("Name").map_or_default(text::py_str);
             let Some(stdout) =
                 self.cat_optional(&self.remote_path(&format!("{name}/manifest.json")))?
             else {
@@ -145,7 +152,7 @@ impl RcloneStorage {
                 Ok(value) => value,
                 Err(_) => serde_json::json!({
                     "name": name,
-                    "date": item.get("ModTime").map(text::py_str).unwrap_or_default(),
+                    "date": item.get("ModTime").map_or_default(text::py_str),
                 }),
             };
             backups.push(value);
@@ -153,6 +160,8 @@ impl RcloneStorage {
         Ok(backups)
     }
 
+    /// Copy the remote directory for `backup_name` into `dest` and emit one
+    /// `progress` event when finished.
     pub fn download(&self, backup_name: &str, dest: &Path) -> Result<(), CoreError> {
         fs::create_dir_all(dest).map_err(CoreError::os)?;
         self.run(&[
@@ -175,6 +184,7 @@ impl RcloneStorage {
         Ok(())
     }
 
+    /// Purge the oldest remote directories beyond `max_keep` (at least 1).
     pub fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
         let output = self.run(&["lsjson", &self.remote_path(""), "--dirs-only"])?;
         let items: Vec<Value> = serde_json::from_slice(&output.stdout)
@@ -188,14 +198,14 @@ impl RcloneStorage {
             })
             .collect();
         sorted.sort_by(|left, right| {
-            let left = left.get("ModTime").map(text::py_str).unwrap_or_default();
-            let right = right.get("ModTime").map(text::py_str).unwrap_or_default();
+            let left = left.get("ModTime").map_or_default(text::py_str);
+            let right = right.get("ModTime").map_or_default(text::py_str);
             right.cmp(&left)
         });
         let keep = max_keep.max(1) as usize;
         let mut first_error = None;
         for item in sorted.into_iter().skip(keep) {
-            let name = item.get("Name").map(text::py_str).unwrap_or_default();
+            let name = item.get("Name").map_or_default(text::py_str);
             if let Err(error) = self.run(&["purge", &self.remote_path(&name)])
                 && first_error.is_none()
             {
@@ -208,6 +218,7 @@ impl RcloneStorage {
         }
     }
 
+    /// Purge the remote directory for `backup_name`.
     pub fn delete_backup(&self, backup_name: &str) -> Result<(), CoreError> {
         self.run(&["purge", &self.remote_path(backup_name)])
             .map_err(|error| {
@@ -360,10 +371,10 @@ esac
         let temp = tempfile::tempdir().unwrap();
         let storage = script_storage(
             &temp,
-            r#"#!/bin/sh
+            r"#!/bin/sh
 printf 'boom' >&2
 exit 1
-"#,
+",
         );
         let error = storage.run(&["lsjson", "remote:"]).unwrap_err();
         assert!(error.contains("boom"), "{error}");

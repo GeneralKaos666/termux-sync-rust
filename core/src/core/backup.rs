@@ -34,19 +34,15 @@ fn cfg_string(cfg: &Value, key: &str, default: &str) -> String {
 fn excludes(cfg: &Value) -> Vec<String> {
     cfg.get("exclude_patterns")
         .and_then(Value::as_array)
-        .map(|items| items.iter().map(text::py_str).collect())
-        .unwrap_or_default()
+        .map_or_default(|items| items.iter().map(text::py_str).collect())
 }
 
 fn text_field(value: &Value, key: &str) -> String {
-    value.get(key).map(text::py_str).unwrap_or_default()
+    value.get(key).map_or_default(text::py_str)
 }
 
 fn text_field_or_dash(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .map(text::py_str)
-        .unwrap_or_else(|| "—".to_string())
+    value.get(key).map_or_else(|| "—".to_string(), text::py_str)
 }
 
 fn label_field(value: &Value) -> String {
@@ -61,8 +57,7 @@ fn package_count(value: &Value) -> usize {
     value
         .get("packages")
         .and_then(Value::as_array)
-        .map(Vec::len)
-        .unwrap_or(0)
+        .map_or(0, Vec::len)
 }
 
 /// Sum `files[*].size` from an object map, ignoring entries without a number.
@@ -79,8 +74,7 @@ fn manifest_total_size(manifest: &Value) -> i64 {
     manifest
         .get("files")
         .and_then(Value::as_object)
-        .map(files_total_size)
-        .unwrap_or(0)
+        .map_or(0, files_total_size)
 }
 
 /// Stage event fields. Key order is part of the TUI protocol: id, label, state,
@@ -129,8 +123,7 @@ fn prepare_work_dir(path: &Path) -> Result<(), CoreError> {
 fn restore_work_dir(name: &str) -> Result<PathBuf, CoreError> {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |duration| duration.as_nanos());
     let dir = paths::tmp_root().join(format!("restore_{name}_{}_{}", std::process::id(), nanos));
     prepare_work_dir(&dir)?;
     Ok(dir)
@@ -145,6 +138,7 @@ fn ensure_extract_space(root: &Path, needed: u64) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Report the configured backend as `{"kind": ...}` without touching it.
 pub fn get_storage(cfg: &Value) -> Result<Value, CoreError> {
     let storage = Storage::from_config(cfg)?;
     Ok(json!({ "kind": storage.kind() }))
@@ -202,8 +196,7 @@ fn print_backup_entry(index: usize, backup: &Value) {
         backup
             .get("files")
             .and_then(Value::as_object)
-            .map(Map::len)
-            .unwrap_or(0)
+            .map_or(0, Map::len)
     ));
     render::print_line(&format!(
         "Version {}",
@@ -219,6 +212,7 @@ fn print_backup_entry(index: usize, backup: &Value) {
     }
 }
 
+/// Print the table of available backups and return them as a JSON array.
 pub fn list(cfg: &Value) -> Result<Value, CoreError> {
     let storage = Storage::from_config(cfg)?;
     render::print_section(
@@ -454,8 +448,7 @@ impl ArchiveContext<'_> {
                     let name = result
                         .path
                         .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_default();
+                        .map_or_default(|name| name.to_string_lossy().into_owned());
                     let checksum = storage::sha256_file(&result.path)?;
                     Ok((name, result.size, checksum))
                 },
@@ -608,10 +601,10 @@ fn verify_backup(storage: &Storage, meta_value: &Value, location: &str) -> Verif
     emit_stage(
         "verify",
         "Verify",
-        if verified != Some(false) {
-            "complete"
-        } else {
+        if verified == Some(false) {
             "failed"
+        } else {
+            "complete"
         },
         7,
     );
@@ -643,8 +636,7 @@ fn report_backup_success(cfg: &Value, summary: &BackupSummary<'_>) -> Result<Val
         summary
             .meta
             .get("date")
-            .map(text::py_str)
-            .unwrap_or_default()
+            .map_or_default(text::py_str)
             .chars()
             .take(19)
             .collect::<String>()
@@ -681,7 +673,7 @@ fn report_backup_success(cfg: &Value, summary: &BackupSummary<'_>) -> Result<Val
             ("location", Value::String(summary.location.to_string())),
             (
                 "verified",
-                summary.verified.map(Value::Bool).unwrap_or(Value::Null),
+                summary.verified.map_or(Value::Null, Value::Bool),
             ),
             (
                 "verify_details",
@@ -721,6 +713,8 @@ fn report_backup_failure(
     )))
 }
 
+/// Run a full backup: archive the configured sources, upload them and prune old
+/// backups. Returns the manifest as JSON; progress is printed and emitted.
 pub fn backup(cfg: &Value, label: &str) -> Result<Value, CoreError> {
     let started = Instant::now();
     render::print_section(
@@ -854,12 +848,10 @@ fn restore_roots() -> HashMap<&'static str, (PathBuf, String)> {
     ] {
         let parent = root
             .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("/"));
+            .map_or_else(|| PathBuf::from("/"), Path::to_path_buf);
         let top = root
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .map_or_default(|name| name.to_string_lossy().into_owned());
         roots.insert(key, (paths::resolve_lenient(&parent), top));
     }
     roots
@@ -895,7 +887,7 @@ impl RestorePlan<'_> {
             (
                 "versions",
                 json!({
-                    "backup": self.manifest.get("version").map(text::py_str).unwrap_or_else(|| "—".to_string()),
+                    "backup": self.manifest.get("version").map_or_else(|| "—".to_string(), text::py_str),
                     "current": paths::VERSION,
                 }),
             ),
@@ -988,7 +980,7 @@ fn download_backup(storage: &Storage, name: &str, tmp_dir: &Path) -> Result<(), 
 fn verify_checksums(tmp_dir: &Path, files: &Map<String, Value>) -> Result<(), CoreError> {
     emit_stage("verify", "Verify", "start", 3);
     for (index, info) in files.values().enumerate() {
-        let archive_name = info.get("archive").map(text::py_str).unwrap_or_default();
+        let archive_name = info.get("archive").map_or_default(text::py_str);
         if manifest::clean_backup_name(&archive_name) != archive_name {
             cleanup(tmp_dir);
             events::emit(
@@ -1011,7 +1003,7 @@ fn verify_checksums(tmp_dir: &Path, files: &Map<String, Value>) -> Result<(), Co
             return Err(CoreError::user("Checksum verification failed"));
         }
         let archive_path = tmp_dir.join(&archive_name);
-        let expected = info.get("checksum").map(text::py_str).unwrap_or_default();
+        let expected = info.get("checksum").map_or_default(text::py_str);
         let actual = storage::sha256_file(&archive_path).unwrap_or_default();
         if !archive_path.exists() || expected.is_empty() || actual != expected {
             cleanup(tmp_dir);
@@ -1096,7 +1088,7 @@ fn extract_archives(
         let stage_id = format!("extract:{key}");
         let (stage_label, stage_index) = extract_stage(key);
         emit_stage(&stage_id, stage_label, "start", stage_index);
-        let archive_name = info.get("archive").map(text::py_str).unwrap_or_default();
+        let archive_name = info.get("archive").map_or_default(text::py_str);
         if manifest::clean_backup_name(&archive_name) != archive_name {
             failed_archives.push(archive_name.clone());
             events::emit(
@@ -1287,6 +1279,8 @@ fn report_restore(report: RestoreReport) -> Result<Value, CoreError> {
     Ok(Value::Null)
 }
 
+/// Download and extract `backup_name`, then reinstall its recorded packages.
+/// Returns the restore summary as JSON.
 pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, CoreError> {
     let started = Instant::now();
     let name = manifest::clean_backup_name(backup_name);
@@ -1302,8 +1296,7 @@ pub fn restore(cfg: &Value, backup_name: &str) -> Result<Value, CoreError> {
     let backup_packages: Vec<String> = manifest
         .get("packages")
         .and_then(Value::as_array)
-        .map(|items| items.iter().map(text::py_str).collect())
-        .unwrap_or_default();
+        .map_or_default(|items| items.iter().map(text::py_str).collect());
     let empty_files = Map::new();
     let files = manifest
         .get("files")
@@ -1414,9 +1407,9 @@ mod tests {
     fn package_diff_is_unavailable_without_current_packages() {
         let diff = package_diff_with(&BTreeSet::new(), &["a".to_string()]);
         assert!(!diff.available);
-        assert!(diff.to_install.is_empty());
-        assert!(diff.installed.is_empty());
-        assert!(diff.device_only.is_empty());
+        assert_eq!(diff.to_install, [] as [std::string::String; 0]);
+        assert_eq!(diff.installed, [] as [std::string::String; 0]);
+        assert_eq!(diff.device_only, [] as [std::string::String; 0]);
     }
 
     #[test]

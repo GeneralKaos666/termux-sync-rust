@@ -11,6 +11,9 @@ use crate::core::fmt;
 use crate::core::json;
 use crate::core::paths;
 
+/// Fresh config in the order the Python source wrote it, filled with defaults
+/// (local storage, gzip, five backups, no encryption).
+#[must_use]
 pub fn default_config() -> Map<String, Value> {
     let mut map = Map::new();
     map.insert("storage".to_string(), Value::String("local".to_string()));
@@ -61,6 +64,8 @@ pub fn default_config() -> Map<String, Value> {
     map
 }
 
+/// Load `config.json`, creating the config directory when missing. A missing
+/// file yields the defaults; unknown keys survive and missing keys are filled in.
 pub fn load_config() -> Result<Value, CoreError> {
     let dir = paths::config_dir();
     fs::create_dir_all(&dir).map_err(CoreError::os)?;
@@ -211,6 +216,8 @@ pub fn validate_patch(value: &Value) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Maximum backups to keep, taken from `max_backups` and clamped to at least 1;
+/// defaults to 5 when the key is absent or not an integer.
 pub fn retention_limit(cfg: &Value) -> i64 {
     cfg.get("max_backups")
         .and_then(fmt::py_int)
@@ -218,6 +225,7 @@ pub fn retention_limit(cfg: &Value) -> i64 {
         .max(1)
 }
 
+/// Write `value` to `config.json` as ASCII-only pretty JSON with mode 0600.
 pub fn save_config(value: &Value) -> Result<(), CoreError> {
     let dir = paths::config_dir();
     fs::create_dir_all(&dir).map_err(CoreError::os)?;

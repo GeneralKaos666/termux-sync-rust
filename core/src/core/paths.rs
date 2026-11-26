@@ -4,9 +4,13 @@
 use std::env;
 use std::path::{Component, Path, PathBuf};
 
+/// Program name used in the config directory and user-facing text.
 pub const APP_NAME: &str = "termux-sync";
+/// Version reported by `--version` and the TUI handshake.
 pub const VERSION: &str = "2.0.0";
 
+/// `$HOME` made absolute, falling back to `/` when unset or empty.
+#[must_use]
 pub fn home_dir() -> PathBuf {
     let path = match env::var_os("HOME") {
         Some(value) if !value.is_empty() => PathBuf::from(value),
@@ -19,6 +23,9 @@ pub fn home_dir() -> PathBuf {
     }
 }
 
+/// Termux prefix (`$PREFIX`, usually `/data/data/com.termux/files/usr`), made
+/// absolute.
+#[must_use]
 pub fn prefix() -> PathBuf {
     let path = match env::var_os("PREFIX") {
         Some(value) if !value.is_empty() => PathBuf::from(value),
@@ -31,6 +38,8 @@ pub fn prefix() -> PathBuf {
     }
 }
 
+/// The directory treated as the Termux home for backups, i.e. `$HOME`.
+#[must_use]
 pub fn termux_files() -> PathBuf {
     match env::var_os("HOME") {
         Some(value) if !value.is_empty() => PathBuf::from(value),
@@ -38,28 +47,39 @@ pub fn termux_files() -> PathBuf {
     }
 }
 
+/// `~/.config/termux-sync`.
+#[must_use]
 pub fn config_dir() -> PathBuf {
     home_dir().join(".config").join(APP_NAME)
 }
 
+/// `config_dir()/config.json`.
+#[must_use]
 pub fn config_file() -> PathBuf {
     config_dir().join("config.json")
 }
 
+/// `config_dir()/cron.json`, holding scheduled backup settings.
+#[must_use]
 pub fn cron_file() -> PathBuf {
     config_dir().join("cron.json")
 }
 
+/// `config_dir()/sync.log`, the append-only log file.
+#[must_use]
 pub fn log_file() -> PathBuf {
     config_dir().join("sync.log")
 }
 
+/// Default local destination for backups: `~/termux-backups`.
+#[must_use]
 pub fn default_dest() -> PathBuf {
     home_dir().join("termux-backups")
 }
 
 /// Expand a leading `~` or `~/`. Other `~` characters stay literal, like
 /// `Path.expanduser()` on POSIX.
+#[must_use]
 pub fn expand_user(path: &str) -> PathBuf {
     if path == "~" {
         return home_dir();
@@ -70,6 +90,9 @@ pub fn expand_user(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+/// Scratch directory: `$TMPDIR` when set, else `$PREFIX/tmp` if it exists, else
+/// the OS temp directory.
+#[must_use]
 pub fn tmp_root() -> PathBuf {
     if let Some(value) = env::var_os("TMPDIR")
         && !value.is_empty()
@@ -164,10 +187,13 @@ impl From<Component<'_>> for ComponentOwned {
 }
 
 /// Python `Path.relative_to` is lexical. `strip_prefix` has the same part-boundary rule.
+#[must_use]
 pub fn relative_to<'a>(path: &'a Path, root: &Path) -> Option<&'a Path> {
     path.strip_prefix(root).ok()
 }
 
+/// Whether `path` equals `root` or lies below it, comparing whole components.
+#[must_use]
 pub fn is_within(path: &Path, root: &Path) -> bool {
     path == root || path.strip_prefix(root).is_ok()
 }

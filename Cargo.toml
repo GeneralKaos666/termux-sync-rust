@@ -8,6 +8,7 @@ redundant_clone = "warn"
 perf = "warn"
 
 [workspace.lints.rust]
+missing_docs = "warn"
 unused_lifetimes = "warn"
 trivial_numeric_casts = "warn"
 

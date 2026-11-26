@@ -180,11 +180,13 @@ pub struct PackageDiff {
 
 impl PackageDiff {
     /// Total number of packages across all sections.
+    #[must_use]
     pub fn total(&self) -> usize {
         self.to_install.len() + self.already_installed.len() + self.device_only.len()
     }
 
     /// Whether every section has received all expected parts.
+    #[must_use]
     pub fn complete(&self) -> bool {
         let complete = |(got, want): (usize, usize)| want == 0 || got >= want;
         complete(self.to_install_parts)
@@ -195,6 +197,7 @@ impl PackageDiff {
     /// Section by index: 0 to install, 1 installed, 2 device-only.
     ///
     /// Indices above 2 fall back to device-only.
+    #[must_use]
     pub fn section(&self, index: usize) -> &[String] {
         match index {
             0 => &self.to_install,
@@ -546,9 +549,7 @@ where
 
 /// Text from a wire field, with control characters stripped.
 fn text(value: Option<String>) -> String {
-    value
-        .map(|value| data::strip_controls(&value).into_owned())
-        .unwrap_or_default()
+    value.map_or_default(|value| data::strip_controls(&value).into_owned())
 }
 
 fn parse_start(value: &Value) -> Event {
@@ -743,8 +744,7 @@ pub fn supports_flag(flag: &str) -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map(|status| status.success())
-        .unwrap_or(false);
+        .is_ok_and(|status| status.success());
     if cacheable && let Ok(mut map) = cache.lock() {
         map.insert(flag.to_string(), answer);
     }
@@ -759,8 +759,7 @@ fn supports_flag_with(bin: &std::path::Path, flag: &str) -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        .is_ok_and(|status| status.success())
 }
 
 fn read_event_line<R: BufRead>(
@@ -785,11 +784,13 @@ fn read_event_line<R: BufRead>(
 }
 
 /// Whether the CLI supports `--json-events`.
+#[must_use]
 pub fn supports_events() -> bool {
     supports_flag("--json-events")
 }
 
 /// Whether the CLI supports `--yes`.
+#[must_use]
 pub fn supports_yes() -> bool {
     supports_flag("--yes")
 }
@@ -1148,8 +1149,7 @@ impl Operation {
         let stage_label = definition
             .iter()
             .find(|(stage_id, _, _)| *stage_id == id)
-            .map(|(_, label, _)| *label)
-            .unwrap_or(label.as_str())
+            .map_or(label.as_str(), |(_, label, _)| *label)
             .to_string();
         self.current_stage = Some(id);
         self.stage_current = 0;
@@ -1352,6 +1352,7 @@ impl Operation {
     /// Whether the current status permits a cancel request.
     ///
     /// Protected restores may not be interrupted.
+    #[must_use]
     pub fn cancel_allowed(&self) -> bool {
         match self.status {
             Status::AwaitingConfirm => true,
@@ -1361,6 +1362,7 @@ impl Operation {
     }
 
     /// Whether the operation reached a terminal status.
+    #[must_use]
     pub fn is_done(&self) -> bool {
         matches!(
             self.status,
@@ -1369,6 +1371,7 @@ impl Operation {
     }
 
     /// Whether the operation is running, awaiting confirmation, or cancelling.
+    #[must_use]
     pub fn is_running(&self) -> bool {
         matches!(
             self.status,
@@ -1377,6 +1380,7 @@ impl Operation {
     }
 
     /// Weighted progress over non-skipped stages, clamped to `0.0..=1.0`.
+    #[must_use]
     pub fn overall(&self) -> f32 {
         let total: f32 = self
             .stages
@@ -1407,6 +1411,7 @@ impl Operation {
     }
 
     /// Human-readable progress for the active stage.
+    #[must_use]
     pub fn progress_text(&self) -> String {
         let unit = self.stage_unit.as_deref().unwrap_or("");
         match (self.stage_current, self.stage_total) {
@@ -1419,16 +1424,18 @@ impl Operation {
     }
 
     /// Time since the process was spawned.
+    #[must_use]
     pub fn elapsed(&self) -> Duration {
         self.started.elapsed()
     }
 
     /// Arguments to reuse when retrying this operation.
+    #[must_use]
     pub fn retry_args(&self) -> Vec<String> {
         self.args.clone()
     }
 
-    /// Appends a log line, dropping the oldest beyond [`LOG_LIMIT`].
+    /// Appends a log line, dropping the oldest beyond `LOG_LIMIT`.
     pub fn push_log(&mut self, level: &str, message: impl Into<String>) {
         self.logs.push_back(LogEntry {
             level: level.to_string(),
@@ -1440,6 +1447,7 @@ impl Operation {
     }
 
     /// Packages in the selected section matching the diff filter.
+    #[must_use]
     pub fn filtered_diff(&self) -> Vec<String> {
         let filter = self.diff_filter.to_lowercase();
         self.diff
@@ -1529,7 +1537,9 @@ impl Drop for ScopedEnv {
     }
 }
 
+/// Build an inert operation for tests.
 #[cfg(test)]
+#[must_use]
 pub fn test_operation(kind: Kind) -> Operation {
     let stages = stage_defs(kind)
         .iter()
@@ -1582,7 +1592,9 @@ pub fn test_operation(kind: Kind) -> Operation {
     }
 }
 
+/// Build a sample restore plan for tests.
 #[cfg(test)]
+#[must_use]
 pub fn test_plan() -> Plan {
     Plan {
         name: "termux_backup_test".to_string(),
@@ -1743,7 +1755,9 @@ mod fixture_tests {
         let bin = temp.path().join("fake");
         fs::write(&bin, "#!/bin/sh\nread line\nsleep 5\n").unwrap();
         fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let _lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _env = ScopedEnv::set("TERMUX_SYNC_BIN", &bin);
         let mut op = Operation::start(Kind::Backup, "x", vec!["backup".into()], false).unwrap();
         op.status = Status::AwaitingConfirm;

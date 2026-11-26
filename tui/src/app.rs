@@ -10,26 +10,38 @@ use crate::data::{self, Backup, Snapshot};
 use crate::history::{HistoryEntry, HistoryStore};
 use crate::ops::{Kind, Operation, Status};
 
+/// Top-level screen shown by the renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
+    /// Panes, overlays, and the status footer.
     Dashboard,
+    /// Full-screen view of a running operation.
     Operation,
 }
 
+/// Where the Output pane content came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputSource {
+    /// Tail of `sync.log`.
     Log,
+    /// Captured output of a one-shot CLI command.
     Command,
 }
 
+/// Pane that receives navigation keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
+    /// The actions list.
     Actions,
+    /// The backup table.
     Backups,
+    /// The output log.
     Output,
 }
 
 impl Focus {
+    /// Next pane in Tab order, wrapping around.
+    #[must_use]
     pub fn next(self) -> Self {
         match self {
             Focus::Actions => Focus::Backups,
@@ -38,6 +50,8 @@ impl Focus {
         }
     }
 
+    /// Previous pane in Tab order, wrapping around.
+    #[must_use]
     pub fn previous(self) -> Self {
         match self {
             Focus::Actions => Focus::Output,
@@ -46,6 +60,8 @@ impl Focus {
         }
     }
 
+    /// Header title for the pane.
+    #[must_use]
     pub fn title(self) -> &'static str {
         match self {
             Focus::Actions => "Actions",
@@ -55,36 +71,61 @@ impl Focus {
     }
 }
 
+/// User-visible action, bound to a key or run from the Actions pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
+    /// Prompt for a label and start a backup.
     Backup,
+    /// Restore the selected backup.
     Restore,
+    /// Ask to delete the selected backup.
     Delete,
+    /// List backups, including remote storage.
     List,
+    /// Show the tail of `sync.log`.
     Logs,
+    /// Ask to clear the log file.
     ClearLogs,
+    /// Collect and show the status report.
     Status,
+    /// Run a disk-space check.
     DiskCheck,
+    /// Prompt for a path and export redacted config.
     ExportConfig,
+    /// Prompt for a path and import config.
     ImportConfig,
+    /// Open the setup handoff card.
     Setup,
+    /// Open the schedule handoff card.
     Schedule,
+    /// Show daemon activity and boot status.
     Daemon,
+    /// Ask to clear the cache.
     ClearCache,
+    /// Reload backups and status.
     Refresh,
+    /// Open the help overlay.
     Help,
+    /// Exit the dashboard.
     Quit,
 }
 
+/// Text prompt currently waiting for input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputPrompt {
+    /// Optional label for a new backup.
     BackupLabel,
+    /// Destination path for an exported config.
     ExportConfig,
+    /// Path to a config export to import.
     ImportConfig,
+    /// Path for the disk check, blank to check all.
     CheckTarget,
 }
 
 impl InputPrompt {
+    /// Overlay title.
+    #[must_use]
     pub fn title(self) -> &'static str {
         match self {
             InputPrompt::BackupLabel => "Backup label",
@@ -94,6 +135,8 @@ impl InputPrompt {
         }
     }
 
+    /// One-line explanation shown with the prompt.
+    #[must_use]
     pub fn hint(self) -> &'static str {
         match self {
             InputPrompt::BackupLabel => "Used in the manifest and backup name.",
@@ -103,6 +146,8 @@ impl InputPrompt {
         }
     }
 
+    /// Initial text placed in the input.
+    #[must_use]
     pub fn seed(self) -> &'static str {
         match self {
             InputPrompt::BackupLabel => "",
@@ -112,6 +157,8 @@ impl InputPrompt {
         }
     }
 
+    /// Maximum accepted input length in bytes.
+    #[must_use]
     pub fn max_len(self) -> usize {
         match self {
             InputPrompt::BackupLabel => 64,
@@ -119,6 +166,8 @@ impl InputPrompt {
         }
     }
 
+    /// Footer message when the prompt is cancelled.
+    #[must_use]
     pub fn cancel_status(self) -> &'static str {
         match self {
             InputPrompt::BackupLabel => "backup cancelled",
@@ -129,13 +178,19 @@ impl InputPrompt {
     }
 }
 
+/// One row in the Actions pane.
 pub struct ActionItem {
+    /// Unicode glyph shown in normal mode.
     pub glyph: &'static str,
+    /// ASCII replacement used with `--ascii`.
     pub ascii: &'static str,
+    /// Row label.
     pub label: &'static str,
+    /// Action run when the row is activated.
     pub action: Action,
 }
 
+/// Actions pane rows in display order.
 pub const ACTIONS: &[ActionItem] = &[
     ActionItem {
         glyph: "↑",
@@ -241,39 +296,64 @@ pub const ACTIONS: &[ActionItem] = &[
     },
 ];
 
+/// Background job submitted to [`Worker`].
 pub enum Task {
+    /// Reload the whole snapshot.
     Refresh,
+    /// Run one CLI command and capture its output.
     Command(Vec<String>),
+    /// List backups through the event protocol.
     ListBackups,
+    /// Collect a status report for this config.
     Status(data::Config),
 }
 
+/// Result sent back by a [`Worker`] thread.
 pub enum WorkerMsg {
+    /// A complete snapshot.
     Refreshed(Snapshot),
-    Output { title: String, text: String },
+    /// Captured command output with its title.
+    Output {
+        /// Title shown on the output pane.
+        title: String,
+        /// Captured stdout and stderr.
+        text: String,
+    },
+    /// Structured backup list.
     Backups(Vec<Backup>),
+    /// Collected status report.
     Status(data::StatusReport),
 }
 
+/// Runs one background task at a time and delivers its result.
 #[derive(Default)]
 pub struct Worker {
     rx: Option<Receiver<Result<WorkerMsg, String>>>,
     busy: bool,
 }
 
+/// Transient card shown while a foreground command runs.
 pub struct TaskOverlay {
+    /// Text shown on the card.
     pub label: String,
+    /// Tick when the task started.
     pub started_at: u64,
+    /// Whether the task finished.
     pub done: bool,
+    /// Tick when the task finished.
     pub done_at: u64,
+    /// Whether the card has been visible long enough to draw.
     pub visible: bool,
 }
 
 impl Worker {
+    /// Whether a task is in flight.
+    #[must_use]
     pub fn is_busy(&self) -> bool {
         self.busy
     }
 
+    /// Spawns `task` unless one is already running, returning whether it started.
     pub fn start(&mut self, task: Task) -> bool {
         if self.busy {
             return false;
@@ -296,6 +376,7 @@ impl Worker {
         true
     }
 
+    /// Non-blocking result check; clears the busy state on a result or disconnect.
     pub fn poll(&mut self) -> Option<Result<WorkerMsg, String>> {
         let rx = self.rx.as_ref()?;
         match rx.try_recv() {
@@ -314,17 +395,25 @@ impl Worker {
     }
 }
 
+/// Clickable rectangles in the header, recorded by the renderer.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HeaderAreas {
+    /// Backup count tile.
     pub count: Rect,
+    /// Warning area.
     pub warning: Rect,
+    /// Status area.
     pub status: Rect,
 }
 
+/// Card that hands an interactive command back to the terminal.
 #[derive(Debug, Clone)]
 pub struct HandoffInfo {
+    /// Command to hand off.
     pub action: Action,
+    /// Card title.
     pub title: &'static str,
+    /// One-line description of what the command asks.
     pub detail: &'static str,
 }
 
@@ -336,62 +425,119 @@ struct FilteredCache {
     indices: Rc<[usize]>,
 }
 
+/// Mutable dashboard state shared by the input loop and renderer.
+///
+/// Fields are public so [`crate::ui`] can read them and store layout rectangles.
 pub struct App {
+    /// Latest data loaded from disk.
     pub snapshot: Snapshot,
     filtered_cache: RefCell<FilteredCache>,
     backups_revision: u64,
+    /// Selection in the Actions pane.
     pub action_state: ListState,
+    /// Selection in the Backups pane, indexed over filtered rows.
     pub backup_state: TableState,
+    /// Case-insensitive filter for backups.
     pub backup_filter: String,
+    /// Whether filter input has focus.
     pub backup_filtering: bool,
+    /// Pane that receives navigation keys.
     pub focus: Focus,
+    /// Lines in the Output pane.
     pub output: Vec<String>,
+    /// Scroll offset from the bottom of `output`.
     pub output_offset: usize,
+    /// Whether `output` holds the log tail or command output.
     pub output_source: OutputSource,
+    /// How many log lines to keep in the Output pane.
     pub log_lines: usize,
+    /// Footer status line.
     pub status: String,
+    /// Whether the help overlay is open.
     pub show_help: bool,
+    /// Whether the status overlay is open.
     pub show_status: bool,
+    /// Scroll offset in the status overlay.
     pub status_scroll: usize,
+    /// Last computed maximum scroll for the status overlay.
     pub status_scroll_max: usize,
+    /// Report shown by the status overlay.
     pub status_report: Option<data::StatusReport>,
+    /// Whether the daemon overlay is open.
     pub show_daemon: bool,
+    /// Scroll offset in the daemon overlay.
     pub daemon_scroll: usize,
+    /// Last computed maximum scroll for the daemon overlay.
     pub daemon_scroll_max: usize,
+    /// Recent daemon log lines.
     pub daemon_log: Vec<String>,
+    /// Whether the Termux:Boot script exists.
     pub daemon_boot_present: bool,
+    /// Keeps the Output pane after a refresh; used by clear-logs.
     pub preserve_output: bool,
+    /// Set when the event loop must exit.
     pub should_quit: bool,
+    /// Command waiting to be handed back to the terminal.
     pub pending: Option<Vec<String>>,
+    /// Background task runner.
     pub worker: Worker,
+    /// Monotonic frame counter used for animation.
     pub tick: u64,
+    /// Tick when the help overlay opened.
     pub help_opened_at: u64,
+    /// Card shown for a foreground command.
     pub task: Option<TaskOverlay>,
+    /// True until the first snapshot arrives.
     pub loading: bool,
+    /// Scroll offset in the help overlay.
     pub help_scroll: usize,
+    /// Recent operation results, newest first.
     pub history: Vec<HistoryEntry>,
+    /// Whether the history overlay is open.
     pub show_history: bool,
+    /// Selected row in the history overlay.
     pub history_selected: usize,
+    /// Disables animation.
     pub reduce_motion: bool,
+    /// Uses ASCII glyphs instead of Unicode.
     pub ascii: bool,
+    /// Screen currently rendered.
     pub screen: Screen,
+    /// Running operation, when `screen` is [`Screen::Operation`].
     pub operation: Option<Operation>,
+    /// Whether the finished operation was recorded in history.
     pub op_result_handled: bool,
+    /// Backup name to select after the next refresh.
     pub pending_select: Option<String>,
+    /// Action waiting for confirmation.
     pub pending_confirm: Option<Action>,
+    /// Prompt waiting for text.
     pub pending_input: Option<InputPrompt>,
+    /// Card waiting for handoff confirmation.
     pub pending_handoff: Option<HandoffInfo>,
+    /// Yes button rectangle on the handoff card.
     pub handoff_yes: Rect,
+    /// No button rectangle on the handoff card.
     pub handoff_no: Rect,
+    /// Current text in the input prompt.
     pub input_text: String,
+    /// Confirm button rectangle on the input prompt.
     pub input_yes: Rect,
+    /// Cancel button rectangle on the input prompt.
     pub input_no: Rect,
+    /// Yes button rectangle on the confirmation prompt.
     pub confirm_yes: Rect,
+    /// No button rectangle on the confirmation prompt.
     pub confirm_no: Rect,
+    /// Header hit-test regions, set by the renderer.
     pub header_areas: HeaderAreas,
+    /// Stat tile hit-test regions.
     pub stat_areas: [Rect; 4],
+    /// Actions pane rectangle.
     pub actions_area: Rect,
+    /// Backups pane rectangle.
     pub backups_area: Rect,
+    /// Output pane rectangle.
     pub output_area: Rect,
 }
 
@@ -402,6 +548,8 @@ impl Default for App {
 }
 
 impl App {
+    /// Creates an app, loads history, and starts an initial refresh.
+    #[must_use]
     pub fn new() -> Self {
         let (history, history_error) = match HistoryStore::load(&data::history_path()) {
             Ok(entries) => (entries, None),
@@ -416,6 +564,8 @@ impl App {
         app
     }
 
+    /// Creates an app seeded with `snapshot` and no background work.
+    #[must_use]
     pub fn with_snapshot(snapshot: Snapshot) -> Self {
         let mut action_state = ListState::default();
         action_state.select(Some(0));
@@ -488,18 +638,21 @@ impl App {
         }
     }
 
+    /// Opens the help overlay from the top.
     pub fn open_help(&mut self) {
         self.show_help = true;
         self.help_opened_at = self.tick;
         self.help_scroll = 0;
     }
 
+    /// Opens the status overlay with `report`.
     pub fn open_status_report(&mut self, report: data::StatusReport) {
         self.status_report = Some(report);
         self.show_status = true;
         self.status_scroll = 0;
     }
 
+    /// Loads daemon activity and opens the daemon overlay.
     pub fn open_daemon(&mut self) {
         self.daemon_log = data::daemon_activity(&data::tail_log(500));
         self.daemon_boot_present = data::boot_script_path().is_file();
@@ -507,6 +660,7 @@ impl App {
         self.daemon_scroll = 0;
     }
 
+    /// Animation progress for the help overlay; `1.0` when motion is reduced.
     pub fn help_progress(&self) -> f32 {
         if !self.show_help || self.reduce_motion {
             return 1.0;
@@ -514,6 +668,7 @@ impl App {
         progress(self.tick, self.help_opened_at, 4)
     }
 
+    /// Animation progress for the task card; `1.0` when motion is reduced.
     pub fn task_progress(&self) -> f32 {
         match &self.task {
             Some(task) if !self.reduce_motion => {
@@ -523,6 +678,7 @@ impl App {
         }
     }
 
+    /// Whether anything on screen still animates and needs frames.
     pub fn needs_tick(&self) -> bool {
         self.worker.is_busy()
             || self.task.is_some()
@@ -530,9 +686,10 @@ impl App {
             || self
                 .operation
                 .as_ref()
-                .is_some_and(|operation| operation.is_running())
+                .is_some_and(super::ops::Operation::is_running)
     }
 
+    /// Advances the frame counter and retires the task card on schedule.
     pub fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
         let now = self.tick;
@@ -551,6 +708,7 @@ impl App {
         }
     }
 
+    /// Current spinner frame, or `None` when idle or motion is reduced.
     pub fn spinner(&self) -> Option<&'static str> {
         if self.reduce_motion {
             return None;
@@ -560,7 +718,7 @@ impl App {
             && !self
                 .operation
                 .as_ref()
-                .is_some_and(|operation| operation.is_running())
+                .is_some_and(super::ops::Operation::is_running)
         {
             return None;
         }
@@ -598,17 +756,20 @@ impl App {
         Rc::clone(&cache.indices)
     }
 
+    /// Backup under the selection, honoring the active filter.
     pub fn selected_backup(&self) -> Option<&Backup> {
         let position = self.backup_state.selected()?;
         let index = *self.filtered_backup_indices().get(position)?;
         self.snapshot.backups.get(index)
     }
 
+    /// Routes a key code with no modifiers; used by tests.
     #[cfg(test)]
     pub fn handle_key(&mut self, code: KeyCode) {
         self.handle_key_with(code, KeyModifiers::NONE);
     }
 
+    /// Routes a key press through overlays, then to the focused pane.
     pub fn handle_key_event(&mut self, key: KeyEvent) {
         self.handle_key_with(key.code, key.modifiers);
     }
@@ -664,8 +825,7 @@ impl App {
     /// Ctrl-C quits, or asks the running operation to cancel. Returns whether the
     /// key was consumed, which is always true when the modifier matches.
     fn handle_key_ctrl_c(&mut self, code: KeyCode, modifiers: KeyModifiers) -> bool {
-        if !(modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(code, KeyCode::Char('c') | KeyCode::Char('C')))
+        if !(modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c' | 'C')))
         {
             return false;
         }
@@ -698,7 +858,7 @@ impl App {
                 self.pending_confirm = None;
                 self.execute_confirmed_action(action);
             }
-            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {
+            KeyCode::Esc | KeyCode::Char('n' | 'q') => {
                 self.pending_confirm = None;
                 self.status = "cancelled".to_string();
             }
@@ -727,7 +887,7 @@ impl App {
 
     fn handle_key_history(&mut self, code: KeyCode) {
         match code {
-            KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q') => {
+            KeyCode::Esc | KeyCode::Char('h' | 'q') => {
                 self.show_history = false;
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -753,7 +913,7 @@ impl App {
 
     fn handle_key_status(&mut self, code: KeyCode) {
         match code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+            KeyCode::Esc | KeyCode::Char('q' | '?') => {
                 self.show_status = false;
                 self.status_scroll = 0;
             }
@@ -779,7 +939,7 @@ impl App {
 
     fn handle_key_daemon(&mut self, code: KeyCode) {
         match code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+            KeyCode::Esc | KeyCode::Char('q' | '?') => {
                 self.show_daemon = false;
                 self.daemon_scroll = 0;
             }
@@ -805,7 +965,7 @@ impl App {
 
     fn handle_key_help(&mut self, code: KeyCode) {
         match code {
-            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+            KeyCode::Esc | KeyCode::Char('?' | 'q') => {
                 self.show_help = false;
                 self.help_scroll = 0;
             }
@@ -846,9 +1006,7 @@ impl App {
     }
 
     fn handle_input_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
-        if modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(code, KeyCode::Char('c') | KeyCode::Char('C'))
-        {
+        if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c' | 'C')) {
             self.pending_input = None;
             self.input_text.clear();
             self.should_quit = true;
@@ -896,8 +1054,8 @@ impl App {
     }
 
     fn handle_operation_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
-        let ctrl_c = modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(code, KeyCode::Char('c') | KeyCode::Char('C'));
+        let ctrl_c =
+            modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c' | 'C'));
         let Some((status, is_done, diff_open)) = self
             .operation
             .as_ref()
@@ -940,7 +1098,7 @@ impl App {
                                 operation.cancel_prompt = false;
                             }
                         }
-                        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {
+                        KeyCode::Esc | KeyCode::Char('n' | 'q') => {
                             if let Some(operation) = &mut self.operation {
                                 operation.cancel_prompt = false;
                                 operation.notice.clear();
@@ -951,7 +1109,7 @@ impl App {
                     return;
                 }
                 match code {
-                    KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('q')
+                    KeyCode::Esc | KeyCode::Char('c' | 'q')
                         if self
                             .operation
                             .as_ref()
@@ -964,7 +1122,7 @@ impl App {
                                     .to_string();
                         }
                     }
-                    KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('q') => {
+                    KeyCode::Esc | KeyCode::Char('c' | 'q') => {
                         self.notice_operation("Restore in progress — cannot cancel safely");
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
@@ -1034,7 +1192,7 @@ impl App {
             KeyCode::Esc => {
                 operation.request_cancel();
             }
-            KeyCode::Char('q') | KeyCode::Char('c') if plain => {
+            KeyCode::Char('q' | 'c') if plain => {
                 operation.request_cancel();
             }
             KeyCode::Char('d') if plain => {
@@ -1070,7 +1228,7 @@ impl App {
                 operation.diff_open = false;
                 operation.diff_filtering = false;
             }
-            KeyCode::Char('q') | KeyCode::Char('c') if plain => {
+            KeyCode::Char('q' | 'c') if plain => {
                 operation.request_cancel();
             }
             KeyCode::Char('d') if plain => {
@@ -1095,10 +1253,10 @@ impl App {
                 operation.diff_scroll = 0;
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                operation.diff_scroll = operation.diff_scroll.saturating_add(1)
+                operation.diff_scroll = operation.diff_scroll.saturating_add(1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                operation.diff_scroll = operation.diff_scroll.saturating_sub(1)
+                operation.diff_scroll = operation.diff_scroll.saturating_sub(1);
             }
             KeyCode::PageUp => operation.diff_scroll = operation.diff_scroll.saturating_add(10),
             KeyCode::PageDown => operation.diff_scroll = operation.diff_scroll.saturating_sub(10),
@@ -1146,8 +1304,7 @@ impl App {
             let name = self
                 .operation
                 .as_ref()
-                .map(|operation| operation.name.clone())
-                .unwrap_or_default();
+                .map_or_default(|operation| operation.name.clone());
             self.start_operation(kind, &name, args);
         }
     }
@@ -1166,6 +1323,7 @@ impl App {
         self.op_result_handled = false;
     }
 
+    /// Drains operation events, records history once, and returns whether state changed.
     pub fn poll_operation(&mut self) -> bool {
         let Some(operation) = &mut self.operation else {
             return false;
@@ -1178,8 +1336,7 @@ impl App {
                     operation
                         .result
                         .as_ref()
-                        .map(|result| result.name.clone())
-                        .unwrap_or_default()
+                        .map_or_default(|result| result.name.clone())
                 } else {
                     operation.name.clone()
                 })
@@ -1210,8 +1367,7 @@ impl App {
                 verified: result.and_then(|result| result.verified),
                 at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|duration| duration.as_secs())
-                    .unwrap_or(0),
+                    .map_or(0, |duration| duration.as_secs()),
             };
             self.history.insert(0, entry);
             self.history.truncate(20);
@@ -1230,6 +1386,7 @@ impl App {
         changed
     }
 
+    /// Routes wheel movement to the active overlay or the pane under the pointer.
     pub fn handle_scroll(&mut self, column: u16, row: u16, up: bool) {
         if self.pending_confirm.is_some()
             || self.pending_input.is_some()
@@ -1276,6 +1433,7 @@ impl App {
         }
     }
 
+    /// Routes a left click to overlays, then to the pane under the pointer.
     pub fn handle_mouse(&mut self, column: u16, row: u16) {
         let point = Position::new(column, row);
         if self.show_status || self.show_daemon {
@@ -1524,6 +1682,7 @@ impl App {
         }
     }
 
+    /// Starts `action`, opening prompts or confirmation where required.
     pub fn run(&mut self, action: Action) {
         match action {
             Action::Backup => {
@@ -1683,6 +1842,7 @@ impl App {
         }
     }
 
+    /// Reloads backups and status in the background.
     pub fn refresh(&mut self) {
         if self.snapshot.config.storage != "local" && crate::ops::supports_events() {
             self.start_task(Task::ListBackups);
@@ -1691,6 +1851,7 @@ impl App {
         }
     }
 
+    /// Applies a finished worker result and returns whether state changed.
     pub fn poll_worker(&mut self) -> bool {
         let Some(result) = self.worker.poll() else {
             return false;
@@ -1740,6 +1901,7 @@ impl App {
         true
     }
 
+    /// Replaces the backup list and reselects the first row.
     pub fn apply_backup_list(&mut self, backups: Vec<Backup>) {
         let count = backups.len();
         self.snapshot.backups = backups;
@@ -1753,6 +1915,7 @@ impl App {
         self.op_result_handled = false;
     }
 
+    /// Replaces the snapshot, keeping the previous selection when possible.
     pub fn apply_snapshot(&mut self, snapshot: Snapshot) {
         let selected_name = self
             .pending_select
@@ -1798,6 +1961,8 @@ impl App {
     }
 }
 
+/// Builds a retry command for a history entry; `None` for kinds that cannot be retried.
+#[must_use]
 pub fn history_command(entry: &HistoryEntry) -> Option<(Kind, String, Vec<String>)> {
     match entry.kind.as_str() {
         "backup" => Some((Kind::Backup, "backup".to_string(), backup_command(""))),
@@ -1810,6 +1975,8 @@ pub fn history_command(entry: &HistoryEntry) -> Option<(Kind, String, Vec<String
     }
 }
 
+/// CLI arguments for a backup, omitting an empty label.
+#[must_use]
 pub fn backup_command(label: &str) -> Vec<String> {
     let label = label.trim();
     if label.is_empty() {
@@ -1823,6 +1990,8 @@ pub fn backup_command(label: &str) -> Vec<String> {
     }
 }
 
+/// CLI arguments for restoring `name`.
+#[must_use]
 pub fn restore_command(name: &str) -> Vec<String> {
     vec![
         "restore".to_string(),
@@ -1831,10 +2000,14 @@ pub fn restore_command(name: &str) -> Vec<String> {
     ]
 }
 
+/// CLI arguments for exporting config to `path`.
+#[must_use]
 pub fn export_config_command(path: &str) -> Vec<String> {
     path_command("export-config", path)
 }
 
+/// CLI arguments for importing config from `path`.
+#[must_use]
 pub fn import_config_command(path: &str) -> Vec<String> {
     path_command("import-config", path)
 }
@@ -1848,6 +2021,8 @@ fn path_command(command: &str, path: &str) -> Vec<String> {
     args
 }
 
+/// CLI arguments for a disk check; a blank target checks all paths.
+#[must_use]
 pub fn check_command(target: &str) -> Vec<String> {
     let target = target.trim();
     if target.is_empty() {
@@ -1857,6 +2032,8 @@ pub fn check_command(target: &str) -> Vec<String> {
     }
 }
 
+/// CLI arguments for clearing logs, adding `--yes` when supported.
+#[must_use]
 pub fn clear_logs_command(yes_supported: bool) -> Vec<String> {
     let mut args = vec!["clear-logs".to_string()];
     if yes_supported {
@@ -1865,12 +2042,16 @@ pub fn clear_logs_command(yes_supported: bool) -> Vec<String> {
     args
 }
 
+/// Whether a finished command changes data shown on the dashboard.
+#[must_use]
 pub fn should_refresh_after(title: &str) -> bool {
     ["delete", "clear-cache", "clear-logs", "import-config"]
         .iter()
         .any(|prefix| title.starts_with(prefix))
 }
 
+/// Maps a prompt and its text to CLI arguments; `None` when required text is empty.
+#[must_use]
 pub fn input_command(prompt: InputPrompt, text: &str) -> Option<Vec<String>> {
     let value = text.trim();
     match prompt {
@@ -1881,6 +2062,8 @@ pub fn input_command(prompt: InputPrompt, text: &str) -> Option<Vec<String>> {
     }
 }
 
+/// Clamps the log line count to `40..=2000` after adding `delta`.
+#[must_use]
 pub fn stepped_log_lines(current: usize, delta: isize) -> usize {
     let next = (current as isize + delta).clamp(40, 2000);
     next as usize
@@ -2221,12 +2404,12 @@ mod tests {
         let mut app = App::with_snapshot(snapshot());
         app.run(Action::ImportConfig);
         assert_eq!(app.pending_input, Some(InputPrompt::ImportConfig));
-        assert!(app.input_text.is_empty());
+        assert_eq!(app.input_text, "");
         app.handle_key(KeyCode::Esc);
 
         app.run(Action::DiskCheck);
         assert_eq!(app.pending_input, Some(InputPrompt::CheckTarget));
-        assert!(app.input_text.is_empty());
+        assert_eq!(app.input_text, "");
     }
 
     #[test]
@@ -2618,7 +2801,7 @@ mod list_apply_tests {
             modified: None,
         }]);
         assert_eq!(app.snapshot.backups.len(), 1);
-        assert!(app.snapshot.warning.is_empty());
+        assert_eq!(app.snapshot.warning, [] as [std::string::String; 0]);
         assert_eq!(app.focus, Focus::Backups);
     }
 }

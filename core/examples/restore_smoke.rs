@@ -1,3 +1,4 @@
+//! Smoke test for restoring a local backup.
 use serde_json::json;
 use termux_sync_core::core::backup;
 use termux_sync_core::core::errors::CoreError;

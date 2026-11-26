@@ -1,3 +1,4 @@
+//! Smoke test for the interactive setup and schedule commands.
 use termux_sync_core::core::errors::CoreError;
 use termux_sync_core::core::maintenance;
 

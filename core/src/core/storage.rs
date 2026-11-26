@@ -16,17 +16,24 @@ use crate::core::paths;
 use crate::core::rclone::RcloneStorage;
 use crate::core::text;
 
+/// Where a backup was uploaded and the per-file checksums the backend computed.
 #[derive(Debug, Clone)]
 pub struct UploadResult {
+    /// Backend-specific location string, e.g. the destination directory.
     pub location: String,
+    /// `(file name, sha256)` pairs for the uploaded files.
     pub checksums: Vec<(String, String)>,
 }
 
+/// Backend that copies backups into a directory on this machine.
 pub struct LocalStorage {
+    /// Root directory holding one subdirectory per backup.
     pub root: PathBuf,
 }
 
 impl LocalStorage {
+    /// Build from config, expanding `~` in `local_path` and falling back to
+    /// [`paths::default_dest`] when it is missing or empty.
     pub fn new(cfg: &Value) -> Self {
         let local_path = cfg
             .get("local_path")
@@ -38,6 +45,8 @@ impl LocalStorage {
         }
     }
 
+    /// Copy `backup_dir` into `<root>/<backup_name>` through a staging directory,
+    /// refusing when the destination is the backup directory itself.
     pub fn upload(&self, backup_dir: &Path, backup_name: &str) -> Result<UploadResult, CoreError> {
         let dest = self.root.join(backup_name);
         if paths::resolve_lenient(&dest) == paths::resolve_lenient(backup_dir) {
@@ -79,12 +88,11 @@ impl LocalStorage {
         for source in files {
             let name = source
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
+                .map_or_default(|name| name.to_string_lossy().into_owned());
             let target = staging.join(&name);
             let checksum = copy_with_sha(&source, &target)?;
             checksums.push((name.clone(), checksum));
-            done += fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
+            done += fs::metadata(&source).map_or(0, |meta| meta.len());
             events::emit(
                 "progress",
                 vec![
@@ -103,6 +111,8 @@ impl LocalStorage {
         })
     }
 
+    /// Read `<root>/<backup_name>/manifest.json`; `None` when the name is invalid
+    /// or the manifest is absent.
     pub fn fetch_manifest(&self, backup_name: &str) -> Result<Option<Value>, CoreError> {
         let name = manifest::clean_backup_name(backup_name);
         if name.is_empty() {
@@ -112,6 +122,8 @@ impl LocalStorage {
         read_manifest(&dir)
     }
 
+    /// Manifests of every backup directory under the root, newest name first.
+    /// A missing root means no backups.
     pub fn list_backups(&self) -> Result<Vec<Value>, CoreError> {
         if !self.root.exists() {
             return Ok(Vec::new());
@@ -130,6 +142,8 @@ impl LocalStorage {
             .collect())
     }
 
+    /// Copy every file of `backup_name` into `dest`, emitting `progress` events
+    /// in bytes.
     pub fn download(&self, backup_name: &str, dest: &Path) -> Result<(), CoreError> {
         let name = manifest::clean_backup_name(backup_name);
         let source = self.root.join(&name);
@@ -156,10 +170,9 @@ impl LocalStorage {
         for file in files {
             let name = file
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
+                .map_or_default(|name| name.to_string_lossy().into_owned());
             copy_with_stat(&file, &dest.join(&name))?;
-            done += fs::metadata(&file).map(|meta| meta.len()).unwrap_or(0);
+            done += fs::metadata(&file).map_or(0, |meta| meta.len());
             events::emit(
                 "progress",
                 vec![
@@ -174,6 +187,8 @@ impl LocalStorage {
         Ok(())
     }
 
+    /// Delete the oldest backup directories beyond `max_keep` (at least 1),
+    /// returning the first removal error while still trying the rest.
     pub fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
         if !self.root.exists() {
             return Ok(());
@@ -208,6 +223,8 @@ impl LocalStorage {
         }
     }
 
+    /// Remove the directory for `backup_name`, rejecting invalid names and
+    /// missing backups.
     pub fn delete_backup(&self, backup_name: &str) -> Result<(), CoreError> {
         let cleaned = manifest::clean_backup_name(backup_name);
         if cleaned.is_empty() {
@@ -254,6 +271,7 @@ fn read_manifest(dir: &Path) -> Result<Option<Value>, CoreError> {
     crate::core::json::read_json(&file).map(Some)
 }
 
+/// SHA-256 of a file as lowercase hex, read in 1 MiB chunks.
 pub fn sha256_file(path: &Path) -> Result<String, CoreError> {
     let mut file = File::open(path).map_err(CoreError::os)?;
     let mut hasher = Sha256::new();
@@ -268,6 +286,8 @@ pub fn sha256_file(path: &Path) -> Result<String, CoreError> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+/// Copy `src` to `dst` while preserving mode and timestamps, then return the
+/// SHA-256 of `dst`. Errors with [`CoreError::SameFile`] when both name one inode.
 pub fn copy_with_sha(src: &Path, dst: &Path) -> Result<String, CoreError> {
     if dst.exists() {
         let left = fs::metadata(src).map_err(CoreError::os)?;
@@ -283,6 +303,8 @@ pub fn copy_with_sha(src: &Path, dst: &Path) -> Result<String, CoreError> {
     sha256_file(dst)
 }
 
+/// Copy `src` to `dst` and carry over the source's permission bits and, when
+/// available, its access and modification times.
 pub fn copy_with_stat(src: &Path, dst: &Path) -> Result<(), CoreError> {
     let meta = fs::metadata(src).map_err(CoreError::os)?;
     fs::copy(src, dst).map_err(CoreError::os)?;
@@ -296,12 +318,14 @@ pub fn copy_with_stat(src: &Path, dst: &Path) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Check every archive named in a manifest `files` object exists under `root`
+/// and hashes to the recorded checksum. Returns a success flag and a message.
 pub fn verify_local_backup(root: &Path, files: &Value) -> (bool, String) {
     let Some(files) = files.as_object() else {
         return (false, "local checksums do not match".to_string());
     };
     for (key, info) in files {
-        let archive = info.get("archive").map(text::py_str).unwrap_or_default();
+        let archive = info.get("archive").map_or_default(text::py_str);
         let path = root.join(&archive);
         if !path.is_file() {
             return (
@@ -313,7 +337,7 @@ pub fn verify_local_backup(root: &Path, files: &Value) -> (bool, String) {
             );
         }
         if let Some(size) = info.get("size").and_then(crate::core::fmt::py_int)
-            && path.metadata().map(|meta| meta.len() as i64).unwrap_or(-1) != size
+            && path.metadata().map_or(-1, |meta| meta.len() as i64) != size
         {
             return (
                 false,
@@ -323,7 +347,7 @@ pub fn verify_local_backup(root: &Path, files: &Value) -> (bool, String) {
                 ),
             );
         }
-        let expected = info.get("checksum").map(text::py_str).unwrap_or_default();
+        let expected = info.get("checksum").map_or_default(text::py_str);
         let Ok(actual) = sha256_file(&path) else {
             return (
                 false,
@@ -346,13 +370,19 @@ pub fn verify_local_backup(root: &Path, files: &Value) -> (bool, String) {
     (true, "local checksums match".to_string())
 }
 
+/// Configured storage backend, selected by the `storage` key.
 pub enum Storage {
+    /// A directory on this machine.
     Local(LocalStorage),
+    /// Google Drive through `rclone`.
     Rclone(RcloneStorage),
+    /// A GitHub repository through the REST API.
     GitHub(GitHubStorage),
 }
 
 impl Storage {
+    /// Build the backend named by the `storage` config key, defaulting to local
+    /// and rejecting unknown names.
     pub fn from_config(cfg: &Value) -> Result<Self, CoreError> {
         match cfg
             .get("storage")
@@ -368,6 +398,8 @@ impl Storage {
         }
     }
 
+    /// Config name of the backend: `local`, `gdrive` or `github`.
+    #[must_use]
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Local(_) => "local",
@@ -384,30 +416,37 @@ impl Storage {
         }
     }
 
+    /// Verify the backend is usable; the default implementation does nothing.
     pub fn preflight(&self) -> Result<(), CoreError> {
         self.backend().preflight()
     }
 
+    /// Manifests of every stored backup.
     pub fn list_backups(&self) -> Result<Vec<Value>, CoreError> {
         self.backend().list_backups()
     }
 
+    /// Manifest of the named backup, or `None` when it does not exist.
     pub fn fetch_manifest(&self, name: &str) -> Result<Option<Value>, CoreError> {
         self.backend().fetch_manifest(name)
     }
 
+    /// Copy the named backup into `dest`.
     pub fn download(&self, name: &str, dest: &Path) -> Result<(), CoreError> {
         self.backend().download(name, dest)
     }
 
+    /// Store the backup directory under `name`.
     pub fn upload(&self, dir: &Path, name: &str) -> Result<UploadResult, CoreError> {
         self.backend().upload(dir, name)
     }
 
+    /// Delete backups beyond the retention limit.
     pub fn delete_old(&self, max_keep: i64) -> Result<(), CoreError> {
         self.backend().delete_old(max_keep)
     }
 
+    /// Delete one named backup.
     pub fn delete_backup(&self, name: &str) -> Result<(), CoreError> {
         self.backend().delete_backup(name)
     }
@@ -416,14 +455,21 @@ impl Storage {
 /// Operations every storage backend provides. `Storage` erases the concrete
 /// backend behind this trait so each command is dispatched once, not per method.
 pub trait Backend {
+    /// Check external tools and configuration before a backup or restore.
     fn preflight(&self) -> Result<(), CoreError> {
         Ok(())
     }
+    /// Manifests of every stored backup.
     fn list_backups(&self) -> Result<Vec<Value>, CoreError>;
+    /// Manifest of the named backup, or `None` when it does not exist.
     fn fetch_manifest(&self, name: &str) -> Result<Option<Value>, CoreError>;
+    /// Copy the named backup into `dest`.
     fn download(&self, name: &str, dest: &Path) -> Result<(), CoreError>;
+    /// Store the backup directory under `name`.
     fn upload(&self, dir: &Path, name: &str) -> Result<UploadResult, CoreError>;
+    /// Delete backups beyond the retention limit.
     fn delete_old(&self, max_keep: i64) -> Result<(), CoreError>;
+    /// Delete one named backup.
     fn delete_backup(&self, name: &str) -> Result<(), CoreError>;
 }
 
@@ -553,7 +599,7 @@ mod tests {
         let local = LocalStorage {
             root: temp.path().join("missing"),
         };
-        assert!(local.list_backups().unwrap().is_empty());
+        assert_eq!(local.list_backups().unwrap(), [] as [serde_json::Value; 0]);
     }
 
     #[test]

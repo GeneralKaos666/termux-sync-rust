@@ -3,17 +3,20 @@
 use serde_json::Value;
 
 /// `str.strip()` also strips U+001C through U+001F, which Rust `trim` does not.
+#[must_use]
 pub fn py_strip(text: &str) -> &str {
     text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c))
 }
 
 /// Python slicing by code point: `text[:n]`.
+#[must_use]
 pub fn head_chars(text: &str, n: usize) -> String {
     text.chars().take(n).collect()
 }
 
 /// Python `str.splitlines()`: splits on more separators than `lines()`, including
 /// vertical tab, form feed and the Unicode line separators.
+#[must_use]
 pub fn py_splitlines(text: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0usize;

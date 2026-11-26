@@ -7,6 +7,9 @@ use serde_json::Value;
 use crate::core::paths;
 use crate::core::text::py_strip;
 
+/// Reduce a user-supplied backup name to a single path component, or the empty
+/// string when it is blank, `.`, `..` or still contains a separator.
+#[must_use]
 pub fn clean_backup_name(name: &str) -> String {
     let normalized = name.replace('\\', "/");
     let base = normalized.rsplit('/').next().unwrap_or("");
@@ -18,10 +21,15 @@ pub fn clean_backup_name(name: &str) -> String {
     }
 }
 
+/// Whether `name` is already a clean, single-component backup name.
+#[must_use]
 pub fn valid_backup_name(name: &str) -> bool {
     !name.is_empty() && clean_backup_name(name) == name
 }
 
+/// Sanitise a label: keep Unicode alphanumerics, `_`, `.` and `-`, replace every
+/// other character with `_`, then trim leading and trailing underscores.
+#[must_use]
 pub fn clean_label(label: &str) -> String {
     // Python's `\w` is Unicode alphanumeric plus underscore.
     let replaced: String = py_strip(label)
@@ -37,14 +45,14 @@ pub fn clean_label(label: &str) -> String {
     replaced.trim_matches('_').to_string()
 }
 
+/// Validate a manifest document: a backup name, a `files` object whose entries
+/// carry string `archive` and `checksum`, and an optional `packages` array.
+/// When `require_files` is set the `files` object must not be empty.
 pub fn manifest_shape(manifest: &Value, require_files: bool) -> bool {
     let Some(map) = manifest.as_object() else {
         return false;
     };
-    let name = map
-        .get("name")
-        .map(crate::core::text::py_str)
-        .unwrap_or_default();
+    let name = map.get("name").map_or_default(crate::core::text::py_str);
     if !valid_backup_name(&name) {
         return false;
     }
@@ -67,6 +75,9 @@ pub fn manifest_shape(manifest: &Value, require_files: bool) -> bool {
     map.get("packages").is_none_or(Value::is_array)
 }
 
+/// Exclude patterns that keep the config directory out of a backup of the whole
+/// home directory. Only applies when `source` is the home directory itself.
+#[must_use]
 pub fn self_excludes(source: &Path) -> Vec<String> {
     let source = paths::resolve_lenient(source);
     let home = paths::resolve_lenient(&paths::termux_files());
@@ -77,6 +88,8 @@ pub fn self_excludes(source: &Path) -> Vec<String> {
     }
 }
 
+/// Exclude the local destination when it sits inside the backup source, so a
+/// backup never archives itself. Returns nothing for non-local storage.
 pub fn storage_excludes(cfg: &Value, source: &Path) -> Vec<String> {
     if cfg
         .get("storage")
@@ -86,10 +99,10 @@ pub fn storage_excludes(cfg: &Value, source: &Path) -> Vec<String> {
     {
         return Vec::new();
     }
-    let local_path = cfg
-        .get("local_path")
-        .map(crate::core::text::py_str)
-        .unwrap_or_else(|| paths::default_dest().to_string_lossy().into_owned());
+    let local_path = cfg.get("local_path").map_or_else(
+        || paths::default_dest().to_string_lossy().into_owned(),
+        crate::core::text::py_str,
+    );
     let root = paths::resolve_lenient(&paths::expand_user(&local_path));
     let source = paths::resolve_lenient(source);
     let Ok(relative) = root.strip_prefix(&source) else {
@@ -100,8 +113,7 @@ pub fn storage_excludes(cfg: &Value, source: &Path) -> Vec<String> {
     }
     let name = source
         .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_default(|name| name.to_string_lossy().into_owned());
     vec![format!("{name}/{}", relative.to_string_lossy())]
 }
 

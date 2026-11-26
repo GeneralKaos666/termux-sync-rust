@@ -1,3 +1,5 @@
+//! Standalone entry point for the `termux-sync-tui` dashboard.
+
 use std::process::ExitCode;
 
 fn main() -> ExitCode {

@@ -42,6 +42,7 @@ pub enum LayoutPlan {
 }
 
 /// Selects the layout for `area` from the minimum size and split threshold.
+#[must_use]
 pub fn plan(area: Rect) -> LayoutPlan {
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         LayoutPlan::TooSmall
@@ -286,8 +287,7 @@ fn render_action_confirm(frame: &mut Frame, area: Rect, app: &mut App, action: A
             format!(
                 "Delete {}?",
                 app.selected_backup()
-                    .map(|backup| backup.name.as_str())
-                    .unwrap_or("the selected backup")
+                    .map_or("the selected backup", |backup| backup.name.as_str())
             ),
         ),
         Action::ClearCache => ("Clear cache", "Clear all cache directories?".to_string()),
@@ -357,7 +357,7 @@ fn render_operation(frame: &mut Frame, area: Rect, app: &App, operation: &Operat
         match operation.status {
             Status::AwaitingConfirm => render_restore_plan(frame, body, operation),
             Status::Running | Status::Cancelling => {
-                render_operation_running(frame, body, app, operation)
+                render_operation_running(frame, body, app, operation);
             }
             Status::Succeeded | Status::Warnings => render_operation_result(frame, body, operation),
             Status::Failed => render_operation_failure(frame, body, operation),
@@ -511,7 +511,7 @@ fn render_operation_running(frame: &mut Frame, area: Rect, app: &App, operation:
                 .title(Span::styled(title, fg(color).bold())),
         )
         .gauge_style(fg(color))
-        .ratio(operation.overall() as f64)
+        .ratio(f64::from(operation.overall()))
         .label(format!("{:.0}%", operation.overall() * 100.0));
     frame.render_widget(gauge, gauge_area);
 
@@ -523,8 +523,7 @@ fn render_operation_running(frame: &mut Frame, area: Rect, app: &App, operation:
     let detail = operation
         .stage_detail
         .as_deref()
-        .map(|detail| format!("  {detail}"))
-        .unwrap_or_default();
+        .map_or_default(|detail| format!("  {detail}"));
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(format!(" {marker} "), fg(color).bold()),
@@ -1383,12 +1382,12 @@ fn render_backups(frame: &mut Frame, area: Rect, app: &mut App) {
             Constraint::Fill(1),
         ])
         .areas(inner);
-        let message = if !app.snapshot.backups.is_empty() {
-            format!("No backup matches '{}'", app.backup_filter)
-        } else {
+        let message = if app.snapshot.backups.is_empty() {
             app.snapshot
                 .warning_text()
                 .unwrap_or_else(|| "No local backups. Press R to refresh.".to_string())
+        } else {
+            format!("No backup matches '{}'", app.backup_filter)
         };
         let (title, message) = if app.loading {
             (
@@ -1545,10 +1544,10 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &mut App) {
     } else {
         ("●", fg(SUCCESS))
     };
-    let status_style = if !app.snapshot.warning.is_empty() {
-        fg(WARN)
-    } else {
+    let status_style = if app.snapshot.warning.is_empty() {
         fg(MUTED)
+    } else {
+        fg(WARN)
     };
     let warning = !app.snapshot.warning.is_empty();
     let mut status_spans = vec![Span::styled(format!(" {marker} "), marker_style)];
@@ -1683,8 +1682,7 @@ fn render_history(frame: &mut Frame, area: Rect, app: &App) {
     let start = app.history_selected.saturating_sub(rows.saturating_sub(1));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |duration| duration.as_secs());
     for (index, entry) in app.history.iter().enumerate().skip(start).take(rows) {
         let selected = index == app.history_selected;
         let style = if selected {
@@ -1972,8 +1970,8 @@ fn render_task(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
     let progress = ease_out(app.task_progress());
-    let max_width = area.width.saturating_sub(2).max(20) as f32;
-    let max_height = area.height.saturating_sub(2).max(6) as f32;
+    let max_width = f32::from(area.width.saturating_sub(2).max(20));
+    let max_height = f32::from(area.height.saturating_sub(2).max(6));
     let width = (32.0 + 32.0 * progress).min(max_width) as u16;
     let height = (6.0 + 2.0 * progress).min(max_height) as u16;
     let popup = centered(area, width, height);
@@ -2147,7 +2145,7 @@ fn lerp_color(from: Color, to: Color, t: f32) -> Color {
     let (Color::Rgb(fr, fg, fb), Color::Rgb(tr, tg, tb)) = (from, to) else {
         return from;
     };
-    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+    let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
     Color::Rgb(mix(fr, tr), mix(fg, tg), mix(fb, tb))
 }
 
@@ -2236,7 +2234,7 @@ mod tests {
             .buffer()
             .content()
             .iter()
-            .map(|cell| cell.symbol())
+            .map(ratatui::buffer::Cell::symbol)
             .collect()
     }
 
@@ -2587,7 +2585,7 @@ mod tests {
             .buffer()
             .content()
             .iter()
-            .map(|cell| cell.symbol())
+            .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert!(content.contains("HELP"));
         assert!(content.contains("switch pane"));
@@ -2623,7 +2621,7 @@ mod tests {
             .buffer()
             .content()
             .iter()
-            .map(|cell| cell.symbol())
+            .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert!(content.contains("WORKING"));
         assert!(content.contains("termux-sync list"));
@@ -2649,7 +2647,7 @@ mod tests {
             .buffer()
             .content()
             .iter()
-            .map(|cell| cell.symbol())
+            .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert!(content.contains("clear cache"));
         assert!(content.contains("↑↓ scroll"));
@@ -2670,7 +2668,7 @@ mod tests {
             .buffer()
             .content()
             .iter()
-            .map(|cell| cell.symbol())
+            .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert!(content.contains("LOADING"));
         assert!(content.contains("Loading backups"));
@@ -2719,7 +2717,7 @@ mod tests {
             .buffer()
             .content()
             .iter()
-            .map(|cell| cell.symbol())
+            .map(ratatui::buffer::Cell::symbol)
             .collect()
     }
 

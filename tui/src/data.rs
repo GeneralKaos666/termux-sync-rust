@@ -102,6 +102,7 @@ pub struct LogParts<'a> {
 /// Splits a bracketed log line into timestamp, level, and message.
 ///
 /// Returns `None` unless both bracketed fields are present.
+#[must_use]
 pub fn parse_log_line(line: &str) -> Option<LogParts<'_>> {
     let rest = line.strip_prefix('[')?;
     let (timestamp, rest) = rest.split_once(']')?;
@@ -129,6 +130,7 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// Joins every warning into the single line the UI renders.
+    #[must_use]
     pub fn warning_text(&self) -> Option<String> {
         (!self.warning.is_empty()).then(|| self.warning.join(" · "))
     }
@@ -136,30 +138,35 @@ impl Snapshot {
 
 /// Returns `$HOME`, or an empty path when it is unset.
 pub fn home() -> PathBuf {
-    env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
+    env::var_os("HOME").map_or_default(PathBuf::from)
 }
 
 /// Config directory, `~/.config/termux-sync`.
+#[must_use]
 pub fn config_dir() -> PathBuf {
     home().join(".config").join("termux-sync")
 }
 
 /// `config.json` inside [`config_dir`].
+#[must_use]
 pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
 /// `cron.json` inside [`config_dir`].
+#[must_use]
 pub fn schedule_path() -> PathBuf {
     config_dir().join("cron.json")
 }
 
 /// `sync.log` inside [`config_dir`].
+#[must_use]
 pub fn log_path() -> PathBuf {
     config_dir().join("sync.log")
 }
 
 /// `tui-history.json` inside [`config_dir`].
+#[must_use]
 pub fn history_path() -> PathBuf {
     config_dir().join("tui-history.json")
 }
@@ -167,6 +174,7 @@ pub fn history_path() -> PathBuf {
 /// Reads config, backups, and log from disk.
 ///
 /// Never fails: read and parse errors become [`Snapshot::warning`] entries and defaults are used.
+#[must_use]
 pub fn load_snapshot() -> Snapshot {
     let mut warning = Vec::new();
 
@@ -298,6 +306,7 @@ pub fn load_local_backups(root: &Path) -> Result<Vec<Backup>, String> {
 }
 
 /// Rejects names that could escape the backup directory or confuse path handling.
+#[must_use]
 pub fn is_safe_backup_name(name: &str) -> bool {
     !name.is_empty()
         && name.trim() == name
@@ -308,6 +317,7 @@ pub fn is_safe_backup_name(name: &str) -> bool {
 }
 
 /// Timestamp shown in tables: controls removed, date and time, `T` -> space.
+#[must_use]
 pub fn normalize_date(text: &str) -> String {
     strip_controls(text)
         .chars()
@@ -317,6 +327,7 @@ pub fn normalize_date(text: &str) -> String {
 }
 
 /// Removes control characters except newline and tab, borrowing when the text is already clean.
+#[must_use]
 pub fn strip_controls(text: &str) -> Cow<'_, str> {
     if !text
         .chars()
@@ -343,8 +354,7 @@ pub fn parse_manifest(value: &Value) -> Option<Backup> {
         .get("label")
         .and_then(Value::as_str)
         .filter(|label| !label.is_empty() && *label != name)
-        .map(strip_controls)
-        .unwrap_or_default()
+        .map_or_default(strip_controls)
         .into_owned();
     let date = normalize_date(value.get("date").and_then(Value::as_str).unwrap_or("—"));
     let packages = value
@@ -354,13 +364,12 @@ pub fn parse_manifest(value: &Value) -> Option<Backup> {
     let size = value
         .get("files")
         .and_then(Value::as_object)
-        .map(|files| {
+        .map_or(0, |files| {
             files
                 .values()
                 .filter_map(|file| file.get("size").and_then(Value::as_u64))
                 .sum()
-        })
-        .unwrap_or(0);
+        });
     Some(Backup {
         name: name.into_owned(),
         date,
@@ -374,27 +383,27 @@ pub fn parse_manifest(value: &Value) -> Option<Backup> {
 }
 
 /// Compact age for a backup, preferring the manifest mtime over the recorded date.
+#[must_use]
 pub fn backup_age(backup: &Backup) -> String {
     let now = SystemTime::now();
     if let Some(modified) = backup.modified {
         let seconds = now
             .duration_since(modified)
-            .map(|duration| duration.as_secs() as i64)
-            .unwrap_or(0);
+            .map_or(0, |duration| duration.as_secs() as i64);
         return format_age(seconds.max(0));
     }
     backup_age_at(&backup.date, now)
 }
 
 /// Formats the age of `date` relative to `now`, or `—` when the date cannot be parsed.
+#[must_use]
 pub fn backup_age_at(date: &str, now: SystemTime) -> String {
     let Some(then) = parse_date_secs(date) else {
         return "—".to_string();
     };
     let now = now
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
-        .unwrap_or(0);
+        .map_or(0, |duration| duration.as_secs() as i64);
     format_age((now - then).max(0))
 }
 
@@ -441,13 +450,14 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let year = if month <= 2 { year - 1 } else { year };
     let era = if year >= 0 { year } else { year - 399 } / 400;
     let year_of_era = year - era * 400;
-    let month_prime = ((month + 9) % 12) as i64;
-    let day_of_year = (153 * month_prime + 2) / 5 + day as i64 - 1;
+    let month_prime = i64::from((month + 9) % 12);
+    let day_of_year = (153 * month_prime + 2) / 5 + i64::from(day) - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
 }
 
 /// Returns the last `lines` lines of the default log, reading at most 256 KiB.
+#[must_use]
 pub fn tail_log(lines: usize) -> Vec<String> {
     tail_log_bounded(&log_path(), lines, 256 * 1024)
 }
@@ -456,7 +466,7 @@ fn tail_log_bounded(path: &Path, lines: usize, max_bytes: usize) -> Vec<String> 
     let Ok(mut file) = fs::File::open(path) else {
         return Vec::new();
     };
-    let len = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    let len = file.metadata().map_or(0, |meta| meta.len());
     let start = len.saturating_sub(max_bytes as u64);
     if file.seek(SeekFrom::Start(start)).is_err() {
         return Vec::new();
@@ -496,6 +506,7 @@ pub fn run_captured(args: &[String]) -> Result<String, String> {
 }
 
 /// Builds a [`Command`] for the CLI selected by [`cli_bin`].
+#[must_use]
 pub fn cli_command(args: &[String]) -> Command {
     let mut command = Command::new(cli_bin());
     command.args(args);
@@ -504,12 +515,11 @@ pub fn cli_command(args: &[String]) -> Command {
 
 /// Configured CLI path: `$TERMUX_SYNC_BIN`, or `termux-sync` when unset.
 pub fn cli_bin() -> PathBuf {
-    env::var_os("TERMUX_SYNC_BIN")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("termux-sync"))
+    env::var_os("TERMUX_SYNC_BIN").map_or_else(|| PathBuf::from("termux-sync"), PathBuf::from)
 }
 
 /// Replaces a leading `~` with [`home`], leaving other paths unchanged.
+#[must_use]
 pub fn expand_home(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
         return home().join(rest).to_string_lossy().into_owned();
@@ -521,6 +531,7 @@ pub fn expand_home(path: &str) -> String {
 }
 
 /// Formats bytes with binary units and one decimal place.
+#[must_use]
 pub fn human_size(bytes: u64) -> String {
     let mut value = bytes as f64;
     for unit in ["B", "KB", "MB", "GB"] {
@@ -533,6 +544,7 @@ pub fn human_size(bytes: u64) -> String {
 }
 
 /// Backend-specific destination shown in the status overlay.
+#[must_use]
 pub fn status_target(config: &Config) -> String {
     match config.storage.as_str() {
         "local" => config.local_path.clone(),
@@ -557,6 +569,7 @@ pub fn status_target(config: &Config) -> String {
 }
 
 /// Finds `name` in the first directory of `paths` that contains it.
+#[must_use]
 pub fn which_in(name: &str, paths: &[PathBuf]) -> Option<PathBuf> {
     paths
         .iter()
@@ -565,6 +578,7 @@ pub fn which_in(name: &str, paths: &[PathBuf]) -> Option<PathBuf> {
 }
 
 /// Probes the tools the CLI requires for `storage`, preserving requirement flags.
+#[must_use]
 pub fn probe_tools(storage: &str, paths: &[PathBuf]) -> Vec<ToolStatus> {
     termux_sync_core::core::fsutil::required_tools(storage)
         .into_iter()
@@ -577,12 +591,14 @@ pub fn probe_tools(storage: &str, paths: &[PathBuf]) -> Vec<ToolStatus> {
 }
 
 /// Queries `--version` on a specific binary.
+#[must_use]
 pub fn cli_version_with(bin: &Path) -> Option<String> {
     let output = Command::new(bin).arg("--version").output().ok()?;
     parse_cli_version(output.status.success(), &output.stdout)
 }
 
 /// Queries `--version` on the configured CLI.
+#[must_use]
 pub fn cli_version() -> Option<String> {
     cli_version_with(&cli_bin())
 }
@@ -600,15 +616,16 @@ pub fn parse_cli_version(success: bool, stdout: &[u8]) -> Option<String> {
 }
 
 /// Probes tools from the current `PATH` and builds a status report.
+#[must_use]
 pub fn collect_status(config: &Config) -> StatusReport {
-    let paths: Vec<PathBuf> = env::var_os("PATH")
-        .map(|value| env::split_paths(&value).collect())
-        .unwrap_or_default();
+    let paths: Vec<PathBuf> =
+        env::var_os("PATH").map_or_default(|value| env::split_paths(&value).collect());
     let tools = probe_tools(&config.storage, &paths);
     status_report(config, cli_version(), tools)
 }
 
 /// Builds a status report from already-probed pieces.
+#[must_use]
 pub fn status_report(
     config: &Config,
     cli_version: Option<String>,
@@ -629,6 +646,7 @@ pub fn status_report(
 }
 
 /// Replaces a leading `prefix` or `home` with `$PREFIX` or `~`.
+#[must_use]
 pub fn shorten_path(path: &Path, home: &Path, prefix: &Path) -> String {
     for (base, replacement) in [(prefix, "$PREFIX"), (home, "~")] {
         if base.as_os_str().is_empty() {
@@ -646,11 +664,12 @@ pub fn shorten_path(path: &Path, home: &Path, prefix: &Path) -> String {
 
 /// Shortens a path using the current `PREFIX` and [`home`].
 pub fn short_path(path: &Path) -> String {
-    let prefix = env::var_os("PREFIX").map(PathBuf::from).unwrap_or_default();
+    let prefix = env::var_os("PREFIX").map_or_default(PathBuf::from);
     shorten_path(path, &home(), &prefix)
 }
 
 /// Termux:Boot script that starts the daemon.
+#[must_use]
 pub fn boot_script_path() -> PathBuf {
     home()
         .join(".termux")
@@ -659,6 +678,7 @@ pub fn boot_script_path() -> PathBuf {
 }
 
 /// Up to five recent log lines that mention daemon activity, oldest first.
+#[must_use]
 pub fn daemon_activity(lines: &[String]) -> Vec<String> {
     let markers = [
         "Daemon",
@@ -888,7 +908,7 @@ mod tests {
         use std::time::Duration;
 
         let mut backup = parse_manifest(&manifest()).unwrap();
-        backup.modified = Some(SystemTime::now() - Duration::from_secs(2 * 3_600));
+        backup.modified = Some(SystemTime::now() - Duration::from_hours(2));
         assert_eq!(backup_age(&backup), "2h");
     }
 
