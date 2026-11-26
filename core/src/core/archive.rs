@@ -108,6 +108,7 @@ fn excluded(arc: &Path, excludes: &[String]) -> bool {
 
 /// Add read/execute bits to unreadable entries so one file cannot abort a backup.
 /// The returned guard restores the original modes on drop.
+#[derive(Default)]
 struct UnlockGuard {
     changed: Vec<(PathBuf, u32)>,
 }
@@ -118,9 +119,8 @@ impl Drop for UnlockGuard {
     }
 }
 
-fn unlock_tree(root: &Path, excludes: &[String]) -> UnlockGuard {
+fn unlock_tree(root: &Path, excludes: &[String], guard: &mut UnlockGuard) {
     let wrapped = wrapped_excludes(excludes);
-    let mut changed = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(path) = stack.pop() {
         let Ok(meta) = fs::symlink_metadata(&path) else {
@@ -142,7 +142,7 @@ fn unlock_tree(root: &Path, excludes: &[String]) -> UnlockGuard {
                 if wanted != mode
                     && fs::set_permissions(&path, fs::Permissions::from_mode(wanted)).is_ok()
                 {
-                    changed.push((path.clone(), mode));
+                    guard.changed.push((path.clone(), mode));
                 }
             }
             if let Ok(entries) = fs::read_dir(&path) {
@@ -155,11 +155,10 @@ fn unlock_tree(root: &Path, excludes: &[String]) -> UnlockGuard {
             if wanted != mode
                 && fs::set_permissions(&path, fs::Permissions::from_mode(wanted)).is_ok()
             {
-                changed.push((path, mode));
+                guard.changed.push((path, mode));
             }
         }
     }
-    UnlockGuard { changed }
 }
 
 fn relock(changed: Vec<(PathBuf, u32)>) {
@@ -195,8 +194,8 @@ pub fn create_archive_to_writer<W: Write>(
     options: &ArchiveOptions,
     on_member: &mut dyn FnMut(&Path, u64),
 ) -> Result<W, CoreError> {
-    let _guard = unlock_tree(source, &options.excludes);
-    write_archive(source, sink, options, on_member)
+    let mut guard = UnlockGuard::default();
+    write_archive(source, sink, options, on_member, &mut guard)
 }
 
 fn write_archive<W: Write>(
@@ -204,27 +203,28 @@ fn write_archive<W: Write>(
     sink: W,
     options: &ArchiveOptions,
     on_member: &mut dyn FnMut(&Path, u64),
+    guard: &mut UnlockGuard,
 ) -> Result<W, CoreError> {
     let codec = Codec::parse(&options.compression);
     match codec {
         Codec::Gz => {
             let encoder = GzEncoder::new(sink, GzCompression::new(9));
             let mut builder = Builder::new(encoder);
-            fill_archive(&mut builder, source, options, on_member)?;
+            fill_archive(&mut builder, source, options, on_member, guard)?;
             let encoder = builder.into_inner().map_err(CoreError::os)?;
             encoder.finish().map_err(CoreError::os)
         }
         Codec::Bz2 => {
             let encoder = BzEncoder::new(sink, BzCompression::new(9));
             let mut builder = Builder::new(encoder);
-            fill_archive(&mut builder, source, options, on_member)?;
+            fill_archive(&mut builder, source, options, on_member, guard)?;
             let encoder = builder.into_inner().map_err(CoreError::os)?;
             encoder.finish().map_err(CoreError::os)
         }
         Codec::Xz => {
             let encoder = XzEncoder::new(sink, 6);
             let mut builder = Builder::new(encoder);
-            fill_archive(&mut builder, source, options, on_member)?;
+            fill_archive(&mut builder, source, options, on_member, guard)?;
             let encoder = builder.into_inner().map_err(CoreError::os)?;
             encoder.finish().map_err(CoreError::os)
         }
@@ -256,6 +256,7 @@ fn fill_archive<W: Write>(
     source: &Path,
     options: &ArchiveOptions,
     on_member: &mut dyn FnMut(&Path, u64),
+    guard: &mut UnlockGuard,
 ) -> Result<(), CoreError> {
     builder.follow_symlinks(false);
     builder.sparse(false);
@@ -279,7 +280,13 @@ fn fill_archive<W: Write>(
         if file_type.is_dir() {
             builder.append_dir(&arc, &path).map_err(CoreError::os)?;
             let mut children: Vec<(PathBuf, PathBuf)> = Vec::new();
-            if let Ok(entries) = fs::read_dir(&path) {
+            let entries = fs::read_dir(&path).or_else(|_| {
+                // PERF: only touch permissions when a directory is unreadable,
+                // instead of walking the whole tree before every archive.
+                unlock_tree(&path, &options.excludes, guard);
+                fs::read_dir(&path)
+            });
+            if let Ok(entries) = entries {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     children.push((entry.path(), arc.join(&name)));
@@ -316,7 +323,13 @@ fn fill_archive<W: Write>(
             if meta.nlink() > 1 {
                 seen.insert(key, arc.clone());
             }
-            let mut file = File::open(&path).map_err(CoreError::os)?;
+            let mut file = match File::open(&path) {
+                Ok(file) => file,
+                Err(_) => {
+                    unlock_tree(&path, &options.excludes, guard);
+                    File::open(&path).map_err(CoreError::os)?
+                }
+            };
             builder
                 .append_file(&arc, &mut file)
                 .map_err(CoreError::os)?;
