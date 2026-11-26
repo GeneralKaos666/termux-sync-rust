@@ -162,128 +162,61 @@ impl Fixture {
         panic!("backup result event missing");
     }
 
+    fn with_backup(label: &str) -> (Self, String) {
+        let fx = Self::new();
+        let backup = fx.run(&["--json-events", "backup", "--label", label], None);
+        let name = fx.backup_result(&backup);
+        (fx, name)
+    }
+
     fn write_corrupt_backup(&self, name: &str) {
         let dir = self.home.join("backups").join(name);
         fs::create_dir_all(&dir).unwrap();
         let corrupt = b"not a tar";
         fs::write(dir.join("home.tar.gz"), corrupt).unwrap();
+        self.write_backup_manifest(name, corrupt);
+    }
+
+    /// Write a manifest whose `home` archive checksum and size match `archive`.
+    fn write_backup_manifest(&self, name: &str, archive: &[u8]) {
         let mut hasher = Sha256::new();
-        hasher.update(corrupt);
+        hasher.update(archive);
         let checksum = format!("{:x}", hasher.finalize());
         let manifest = serde_json::json!({
             "name": name,
             "files": {
                 "home": {
                     "archive": "home.tar.gz",
-                    "size": corrupt.len(),
+                    "size": archive.len(),
                     "checksum": checksum,
                 }
             },
             "packages": [],
         });
         fs::write(
-            dir.join("manifest.json"),
+            self.home.join("backups").join(name).join("manifest.json"),
             serde_json::to_string_pretty(&manifest).unwrap(),
         )
         .unwrap();
     }
 
-    fn write_partial_backup(&self, name: &str) {
+    fn write_archive_backup(&self, name: &str, entries: &[(&str, u64, EntryType)]) {
         let dir = self.home.join("backups").join(name);
         fs::create_dir_all(&dir).unwrap();
         let archive_path = dir.join("home.tar.gz");
         let file = fs::File::create(&archive_path).unwrap();
         let mut builder = Builder::new(file);
-        // A valid directory and file, followed by a traversal member that is
-        // refused during extraction (a warning) while the rest still extracts.
-        builder
-            .append(
-                &raw_header("home/", 0, EntryType::Directory),
-                Cursor::new(Vec::<u8>::new()),
-            )
-            .unwrap();
-        builder
-            .append(
-                &raw_header("home/ok.txt", 3, EntryType::Regular),
-                Cursor::new(b"ok\n".to_vec()),
-            )
-            .unwrap();
-        builder
-            .append(
-                &raw_header("../evil.txt", 1, EntryType::Regular),
-                Cursor::new(b"x".to_vec()),
-            )
-            .unwrap();
+        for (member, size, kind) in entries {
+            builder
+                .append(
+                    &raw_header(member, *size, *kind),
+                    Cursor::new(vec![b'x'; *size as usize]),
+                )
+                .unwrap();
+        }
         builder.into_inner().unwrap();
         let bytes = fs::read(&archive_path).unwrap();
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        let checksum = format!("{:x}", hasher.finalize());
-        let manifest = serde_json::json!({
-            "name": name,
-            "files": {
-                "home": {
-                    "archive": "home.tar.gz",
-                    "size": bytes.len(),
-                    "checksum": checksum,
-                }
-            },
-            "packages": [],
-        });
-        fs::write(
-            dir.join("manifest.json"),
-            serde_json::to_string_pretty(&manifest).unwrap(),
-        )
-        .unwrap();
-    }
-
-    fn write_fifo_backup(&self, name: &str) {
-        let dir = self.home.join("backups").join(name);
-        fs::create_dir_all(&dir).unwrap();
-        let archive_path = dir.join("home.tar.gz");
-        let file = fs::File::create(&archive_path).unwrap();
-        let mut builder = Builder::new(file);
-        // Valid directory and file plus a fifo entry, which extraction skips
-        // with an ignorable warning (so restore still succeeds).
-        builder
-            .append(
-                &raw_header("home/", 0, EntryType::Directory),
-                Cursor::new(Vec::<u8>::new()),
-            )
-            .unwrap();
-        builder
-            .append(
-                &raw_header("home/ok.txt", 3, EntryType::Regular),
-                Cursor::new(b"ok\n".to_vec()),
-            )
-            .unwrap();
-        builder
-            .append(
-                &raw_header("home/fifo", 0, EntryType::Fifo),
-                Cursor::new(Vec::<u8>::new()),
-            )
-            .unwrap();
-        builder.into_inner().unwrap();
-        let bytes = fs::read(&archive_path).unwrap();
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        let checksum = format!("{:x}", hasher.finalize());
-        let manifest = serde_json::json!({
-            "name": name,
-            "files": {
-                "home": {
-                    "archive": "home.tar.gz",
-                    "size": bytes.len(),
-                    "checksum": checksum,
-                }
-            },
-            "packages": [],
-        });
-        fs::write(
-            dir.join("manifest.json"),
-            serde_json::to_string_pretty(&manifest).unwrap(),
-        )
-        .unwrap();
+        self.write_backup_manifest(name, &bytes);
     }
 }
 
@@ -305,20 +238,36 @@ fn raw_header(name: &str, size: u64, kind: EntryType) -> Header {
 }
 
 #[test]
-fn backup_list_restore_and_delete_local() {
-    let fx = Fixture::new();
-    let backup = fx.run(&["--json-events", "backup", "--label", "smoke"], None);
-    let name = fx.backup_result(&backup);
+fn backup_writes_manifest_and_archive() {
+    let (fx, name) = Fixture::with_backup("smoke");
     let dir = fx.home.join("backups").join(&name);
     assert!(dir.join("manifest.json").is_file());
     assert!(dir.join("home.tar.gz").is_file());
+
+    let backup = fx.run(&["backup", "-l", "from-flag"], None);
+    assert!(
+        backup.status.success(),
+        "backup -l failed: {}",
+        String::from_utf8_lossy(&backup.stdout)
+    );
+}
+
+#[test]
+fn list_reports_each_backup_event() {
+    let (fx, first) = Fixture::with_backup("first");
+    let second = fx.backup_result(&fx.run(&["--json-events", "backup", "--label", "second"], None));
 
     let listed = fx.run(&["--json-events", "list"], None);
     assert!(listed.status.success());
     let stdout = String::from_utf8_lossy(&listed.stdout);
     assert!(stdout.contains("\"event\":\"backup\""));
-    assert!(stdout.contains(&name));
+    assert!(stdout.contains(&first));
+    assert!(stdout.contains(&second));
+}
 
+#[test]
+fn restore_recovers_a_deleted_file() {
+    let (fx, name) = Fixture::with_backup("smoke");
     fs::remove_file(fx.home.join("data/note.txt")).unwrap();
     let restored = fx.run(&["restore", "--name", &name], Some("y\n"));
     assert!(
@@ -330,35 +279,58 @@ fn backup_list_restore_and_delete_local() {
         fs::read_to_string(fx.home.join("data/note.txt")).unwrap(),
         "keep me\n"
     );
+}
 
+#[test]
+fn delete_removes_the_backup_directory() {
+    let (fx, name) = Fixture::with_backup("smoke");
+    let dir = fx.home.join("backups").join(&name);
     let deleted = fx.run(&["delete", "--name", &name, "--yes"], None);
     assert!(deleted.status.success());
     assert!(!dir.exists());
 }
 
 #[test]
-fn status_logs_check_and_cache() {
+fn status_reports_local_storage_and_version() {
     let fx = Fixture::new();
     let status = fx.run(&["status"], None);
     assert!(status.status.success());
     let text = String::from_utf8_lossy(&status.stdout);
     assert!(text.contains("LOCAL"));
     assert!(text.contains("App version v2.0.0"));
+}
 
+#[test]
+fn logs_print_recent_lines() {
+    let fx = Fixture::new();
     let logs = fx.run(&["logs", "--lines", "3"], None);
     assert!(logs.status.success());
     assert!(String::from_utf8_lossy(&logs.stdout).contains("fixture"));
 
+    assert!(fx.run(&["logs", "--lines=3"], None).status.success());
+}
+
+#[test]
+fn clear_logs_empties_the_log() {
+    let fx = Fixture::new();
     let cleared = fx.run(&["clear-logs", "--yes"], None);
     assert!(cleared.status.success());
     let log = fs::read_to_string(fx.home.join(".config/termux-sync/sync.log")).unwrap();
     assert!(!log.contains("fixture"));
     assert!(log.contains("Log file cleared by user"));
+}
 
+#[test]
+fn check_reports_disk_check() {
+    let fx = Fixture::new();
     let check = fx.run(&["check", "~"], None);
     assert!(check.status.success());
     assert!(String::from_utf8_lossy(&check.stdout).contains("DISK CHECK"));
+}
 
+#[test]
+fn clear_cache_removes_cache_dir() {
+    let fx = Fixture::new();
     fs::create_dir_all(fx.home.join(".cache/drop")).unwrap();
     fs::write(fx.home.join(".cache/drop/file"), "x").unwrap();
     let cache = fx.run(&["clear-cache", "--yes"], None);
@@ -367,7 +339,7 @@ fn status_logs_check_and_cache() {
 }
 
 #[test]
-fn export_redacts_and_import_merges() {
+fn export_config_redacts_secrets() {
     let fx = Fixture::new();
     let export = fx.temp.path().join("export.json");
     let out = fx.run(&["export-config", export.to_str().unwrap()], None);
@@ -376,7 +348,11 @@ fn export_redacts_and_import_merges() {
     assert!(exported.contains("*** REDACTED ***"));
     assert!(!exported.contains("secret-token"));
     assert!(!exported.contains("secret-pass"));
+}
 
+#[test]
+fn import_config_merges_values() {
+    let fx = Fixture::new();
     let import = fx.temp.path().join("import.json");
     fs::write(
         &import,
@@ -454,7 +430,7 @@ fn setup_recovers_from_broken_config() {
 }
 
 #[test]
-fn parse_errors_and_version() {
+fn version_prints_release_string() {
     let fx = Fixture::new();
     let version = fx.run(&["--version"], None);
     assert!(version.status.success());
@@ -462,34 +438,48 @@ fn parse_errors_and_version() {
         String::from_utf8_lossy(&version.stdout).trim(),
         "termux-sync v2.0.0"
     );
+}
 
+#[test]
+fn unknown_command_exits_two() {
+    let fx = Fixture::new();
     let unknown = fx.run(&["bogus"], None);
     assert_eq!(unknown.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&unknown.stdout).contains("Unknown command"));
+}
 
+#[test]
+fn bad_lines_value_exits_two() {
+    let fx = Fixture::new();
     let bad_lines = fx.run(&["logs", "--lines", "x"], None);
     assert_eq!(bad_lines.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&bad_lines.stdout).contains("invalid int value"));
+}
 
-    let backup = fx.run(&["--json-events", "backup", "--label", "delete"], None);
-    let _ = fx.backup_result(&backup);
+#[test]
+fn tui_version_prints_release_string() {
+    let fx = Fixture::new();
     let tui_version = fx.run(&["tui", "--version"], None);
     assert!(tui_version.status.success());
     assert_eq!(
         String::from_utf8_lossy(&tui_version.stdout).trim(),
         "termux-sync tui 2.0.0"
     );
+}
+
+#[test]
+fn tui_help_prints_usage() {
+    let fx = Fixture::new();
     let tui_help = fx.run(&["tui", "--help"], None);
     assert!(tui_help.status.success());
     assert!(String::from_utf8_lossy(&tui_help.stdout).contains("Usage: termux-sync tui"));
+}
+
+#[test]
+fn tui_without_tty_exits_two() {
+    let fx = Fixture::new();
     let tui_no_tty = fx.run(&["tui"], None);
     assert_eq!(tui_no_tty.status.code(), Some(2));
-
-    let missing_delete = fx.run(&["delete", "--name", "missing", "--yes"], None);
-    assert_eq!(missing_delete.status.code(), Some(1));
-    let text = String::from_utf8_lossy(&missing_delete.stdout);
-    assert!(text.contains("Failed to delete backup"));
-    assert!(!text.contains("FileNotFoundError"));
 }
 
 #[test]
@@ -519,7 +509,16 @@ fn restore_fails_when_extraction_fails() {
 #[test]
 fn restore_fails_on_partial_extraction() {
     let fx = Fixture::new();
-    fx.write_partial_backup("termux_backup_partial");
+    // A valid directory and file, followed by a traversal member that is
+    // refused during extraction (a warning) while the rest still extracts.
+    fx.write_archive_backup(
+        "termux_backup_partial",
+        &[
+            ("home/", 0, EntryType::Directory),
+            ("home/ok.txt", 3, EntryType::Regular),
+            ("../evil.txt", 1, EntryType::Regular),
+        ],
+    );
     let out = fx.run(
         &[
             "--json-events",
@@ -536,7 +535,16 @@ fn restore_fails_on_partial_extraction() {
 #[test]
 fn restore_succeeds_when_only_device_fifo_refused() {
     let fx = Fixture::new();
-    fx.write_fifo_backup("termux_backup_fifo");
+    // Valid directory and file plus a fifo entry, which extraction skips
+    // with an ignorable warning (so restore still succeeds).
+    fx.write_archive_backup(
+        "termux_backup_fifo",
+        &[
+            ("home/", 0, EntryType::Directory),
+            ("home/ok.txt", 3, EntryType::Regular),
+            ("home/fifo", 0, EntryType::Fifo),
+        ],
+    );
     let out = fx.run(
         &["--json-events", "restore", "--name", "termux_backup_fifo"],
         Some("{\"confirm\":\"RESTORE\"}\n"),
@@ -599,34 +607,27 @@ fn update_hint_uses_install_script() {
 }
 
 #[test]
-fn error_paths_exit_non_zero() {
+fn import_config_missing_file_exits_non_zero() {
     let fx = Fixture::new();
-    assert_eq!(
-        fx.run(&["import-config", "/nope/missing.json"], None)
-            .status
-            .code(),
-        Some(1),
-        "import-config missing file"
-    );
-    assert_eq!(
-        fx.run(&["restore", "--name", "nope"], None).status.code(),
-        Some(1),
-        "restore missing backup"
-    );
-    assert!(fx.run(&["logs", "--lines=3"], None).status.success());
-    assert_eq!(
-        fx.run(&["delete", "-n", "missing", "--yes"], None)
-            .status
-            .code(),
-        Some(1),
-        "delete missing backup"
-    );
-    let backup = fx.run(&["backup", "-l", "from-flag"], None);
-    assert!(
-        backup.status.success(),
-        "backup -l failed: {}",
-        String::from_utf8_lossy(&backup.stdout)
-    );
+    let out = fx.run(&["import-config", "/nope/missing.json"], None);
+    assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
+fn restore_missing_backup_exits_non_zero() {
+    let fx = Fixture::new();
+    let out = fx.run(&["restore", "--name", "nope"], None);
+    assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
+fn delete_missing_backup_exits_non_zero() {
+    let fx = Fixture::new();
+    let out = fx.run(&["delete", "-n", "missing", "--yes"], None);
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("Backup not found"), "{text}");
+    assert!(!text.contains("FileNotFoundError"));
 }
 
 #[test]
