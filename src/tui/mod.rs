@@ -28,7 +28,7 @@ use ratatui::crossterm::event::{
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{Clear, ClearType, EnterAlternateScreen, enable_raw_mode};
 
-use crate::app::App;
+use crate::tui::app::App;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const FRAME_TIME: Duration = Duration::from_millis(50);

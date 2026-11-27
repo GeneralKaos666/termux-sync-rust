@@ -591,7 +591,7 @@ pub fn which_in(name: &str, paths: &[PathBuf]) -> Option<PathBuf> {
 /// Probes the tools the CLI requires for `storage`, preserving requirement flags.
 #[must_use]
 pub fn probe_tools(storage: &str, paths: &[PathBuf]) -> Vec<ToolStatus> {
-    termux_sync_core::core::fsutil::required_tools(storage)
+    crate::core::fsutil::required_tools(storage)
         .into_iter()
         .map(|(name, required)| ToolStatus {
             name,

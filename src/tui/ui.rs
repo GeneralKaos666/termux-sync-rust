@@ -11,9 +11,9 @@ use ratatui::widgets::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{ACTIONS, Action, App, Focus, HeaderAreas, OutputSource, Screen};
-use crate::data::{backup_age, human_size, parse_log_line};
-use crate::ops::{Kind, Operation, Plan, StageState, Status};
+use crate::tui::app::{ACTIONS, Action, App, Focus, HeaderAreas, OutputSource, Screen};
+use crate::tui::data::{backup_age, human_size, parse_log_line};
+use crate::tui::ops::{Kind, Operation, Plan, StageState, Status};
 
 /// Narrowest terminal the dashboard renders; below this it shows a size warning.
 pub const MIN_WIDTH: u16 = 48;
@@ -623,7 +623,7 @@ fn render_operation_log(frame: &mut Frame, area: Rect, operation: &Operation) ->
         lines.push(Line::from(vec![
             level_chip(&entry.level),
             Span::raw(" "),
-            Span::raw(crate::data::strip_line_controls(&entry.message)),
+            Span::raw(crate::tui::data::strip_line_controls(&entry.message)),
         ]));
     }
 
@@ -688,7 +688,7 @@ fn expanded_plan_lines(operation: &Operation, plan: &Plan) -> Vec<Line<'static>>
     ]));
     lines.push(Line::from(vec![
         Span::styled(" Date     ", fg(MUTED)),
-        Span::raw(crate::data::normalize_date(&plan.date)),
+        Span::raw(crate::tui::data::normalize_date(&plan.date)),
         Span::styled("   Label ", fg(MUTED)),
         Span::raw(if plan.label.is_empty() {
             "—".to_string()
@@ -1584,7 +1584,7 @@ fn render_log_line(line: &str) -> Line<'_> {
         Span::raw(" "),
         level_chip(parts.level),
         Span::raw(" "),
-        Span::raw(crate::data::strip_line_controls(parts.message)),
+        Span::raw(crate::tui::data::strip_line_controls(parts.message)),
     ])
 }
 
@@ -1777,7 +1777,7 @@ fn render_history(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(format!("{:<18}", entry.name), style),
             Span::styled(format!("{:<10}", entry.status), fg(MUTED)),
             Span::styled(
-                format!("{:<8}", crate::data::human_size(entry.size)),
+                format!("{:<8}", crate::tui::data::human_size(entry.size)),
                 fg(MUTED),
             ),
             Span::styled(fmt_millis(entry.duration_ms), fg(MUTED)),
@@ -1893,7 +1893,7 @@ fn render_daemon(frame: &mut Frame, area: Rect, app: &App) -> usize {
     let boot = if app.daemon_boot_present {
         format!(
             "present {}",
-            crate::data::short_path(&crate::data::boot_script_path())
+            crate::tui::data::short_path(&crate::tui::data::boot_script_path())
         )
     } else {
         "missing — run termux-sync schedule to create it".to_string()
@@ -2276,8 +2276,8 @@ fn pane_block(title: &str, detail: Option<&str>, focused: bool, color: Color) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{Backup, Config, Snapshot};
-    use crate::ops::{Kind, Outcome, Status, test_operation, test_plan};
+    use crate::tui::data::{Backup, Config, Snapshot};
+    use crate::tui::ops::{Kind, Outcome, Status, test_operation, test_plan};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::KeyCode;
@@ -2402,7 +2402,7 @@ mod tests {
     #[test]
     fn setup_handoff_card_renders() {
         let mut app = app();
-        app.run(crate::app::Action::Setup);
+        app.run(crate::tui::app::Action::Setup);
         let frame = render_app(&mut app, 100, 30);
         assert!(frame.contains("Handoff"));
         assert!(frame.contains("termux-sync"));
@@ -2413,7 +2413,7 @@ mod tests {
     fn history_window_follows_the_selected_entry() {
         let mut app = app();
         app.history = (0..20)
-            .map(|n| crate::history::HistoryEntry {
+            .map(|n| crate::tui::history::HistoryEntry {
                 kind: "backup".into(),
                 name: format!("entry-{n}"),
                 status: "succeeded".into(),
@@ -2435,7 +2435,7 @@ mod tests {
         let mut app = app();
         let base = app.snapshot.backups[0].clone();
         app.snapshot.backups = (0..30)
-            .map(|index| crate::data::Backup {
+            .map(|index| crate::tui::data::Backup {
                 name: format!("termux_backup_{index:04}"),
                 ..base.clone()
             })
@@ -2447,7 +2447,7 @@ mod tests {
     #[test]
     fn history_overlay_renders_entries() {
         let mut app = app();
-        app.history = vec![crate::history::HistoryEntry {
+        app.history = vec![crate::tui::history::HistoryEntry {
             kind: "backup".to_string(),
             name: "termux_backup_test".to_string(),
             status: "succeeded".to_string(),
@@ -2477,7 +2477,7 @@ mod tests {
     #[test]
     fn backup_label_prompt_renders() {
         let mut app = app();
-        app.run(crate::app::Action::Backup);
+        app.run(crate::tui::app::Action::Backup);
         let frame = render_app(&mut app, 100, 30);
         assert!(frame.contains("Backup label"));
         assert!(frame.contains("Used in the manifest and backup name."));
@@ -2502,7 +2502,7 @@ mod tests {
     fn status_and_daemon_modals_document_escape_to_close() {
         let mut app = app();
         app.show_status = true;
-        app.status_report = Some(crate::data::StatusReport {
+        app.status_report = Some(crate::tui::data::StatusReport {
             storage: "local".into(),
             target: "~/termux-backups".into(),
             compression: "gz".into(),
@@ -2550,7 +2550,7 @@ mod tests {
     #[test]
     fn status_modal_scrolls_to_the_last_tool_at_minimum_size() {
         let mut app = app();
-        app.open_status_report(crate::data::StatusReport {
+        app.open_status_report(crate::tui::data::StatusReport {
             storage: "github".into(),
             target: "me/backups @ main".into(),
             compression: "xz".into(),
@@ -2562,7 +2562,7 @@ mod tests {
             history_path: "~/.config/termux-sync/tui-history.json".into(),
             tools: ["python3", "dpkg", "tar", "rclone", "git", "curl"]
                 .into_iter()
-                .map(|name| crate::data::ToolStatus {
+                .map(|name| crate::tui::data::ToolStatus {
                     name,
                     path: None,
                     required: name != "rclone",
@@ -2595,7 +2595,7 @@ mod tests {
     #[test]
     fn status_modal_shows_backend_target_and_missing_tool() {
         let mut app = app();
-        app.open_status_report(crate::data::StatusReport {
+        app.open_status_report(crate::tui::data::StatusReport {
             storage: "github".into(),
             target: "me/backups @ main".into(),
             compression: "xz".into(),
@@ -2605,7 +2605,7 @@ mod tests {
             config_path: "~/.config/termux-sync/config.json".into(),
             log_path: "~/.config/termux-sync/sync.log".into(),
             history_path: "~/.config/termux-sync/tui-history.json".into(),
-            tools: vec![crate::data::ToolStatus {
+            tools: vec![crate::tui::data::ToolStatus {
                 name: "rclone",
                 path: None,
                 required: true,
@@ -2720,7 +2720,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         let mut app = app();
-        app.task = Some(crate::app::TaskOverlay {
+        app.task = Some(crate::tui::app::TaskOverlay {
             label: "termux-sync list".to_string(),
             started_at: 0,
             done: false,
@@ -2828,7 +2828,7 @@ mod tests {
             .diff
             .apply("device_only", 1, 1, vec!["vim".into()]);
         app.operation = Some(operation);
-        app.screen = crate::app::Screen::Operation;
+        app.screen = crate::tui::app::Screen::Operation;
         app
     }
 

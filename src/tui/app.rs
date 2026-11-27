@@ -6,10 +6,10 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Position, Rect};
 use ratatui::widgets::{ListState, TableState};
 
-use crate::data::{self, Backup, Snapshot};
-use crate::history::{HistoryEntry, HistoryStore};
-use crate::ops::{Kind, Operation, Status};
-use crate::ui::UiLayout;
+use crate::tui::data::{self, Backup, Snapshot};
+use crate::tui::history::{HistoryEntry, HistoryStore};
+use crate::tui::ops::{Kind, Operation, Status};
+use crate::tui::ui::UiLayout;
 
 /// Top-level screen shown by the renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -369,10 +369,10 @@ impl Worker {
         std::thread::spawn(move || {
             let result = match task {
                 Task::Refresh => Ok(WorkerMsg::Refreshed(data::load_snapshot())),
-                Task::ListBackups => match crate::ops::collect_backups() {
+                Task::ListBackups => match crate::tui::ops::collect_backups() {
                     Ok(backups) => Ok(WorkerMsg::Backups(backups)),
                     // An old CLI has no event stream: fall back to captured text.
-                    Err(_) if !crate::ops::supports_events() => {
+                    Err(_) if !crate::tui::ops::supports_events() => {
                         data::run_captured(&["list".to_string()]).map(|text| WorkerMsg::Output {
                             title: "list".to_string(),
                             text,
@@ -446,7 +446,7 @@ struct FilteredCache {
 
 /// Mutable dashboard state shared by the input loop and renderer.
 ///
-/// Fields are public so [`crate::ui`] can read them and store layout rectangles.
+/// Fields are public so [`crate::tui::ui`] can read them and store layout rectangles.
 pub struct App {
     /// Latest data loaded from disk.
     pub snapshot: Snapshot,
@@ -567,8 +567,8 @@ pub struct App {
     /// Max scroll offset of the package diff, set by the renderer.
     pub diff_scroll_max: usize,
     /// CLI features probed at startup.
-    pub caps: crate::ops::Capabilities,
-    caps_rx: Option<Receiver<crate::ops::Capabilities>>,
+    pub caps: crate::tui::ops::Capabilities,
+    caps_rx: Option<Receiver<crate::tui::ops::Capabilities>>,
 }
 
 impl Default for App {
@@ -591,7 +591,7 @@ impl App {
         app.status = "loading backups…".to_string();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(crate::ops::Capabilities::detect());
+            let _ = tx.send(crate::tui::ops::Capabilities::detect());
         });
         app.caps_rx = Some(rx);
         app.refresh();
@@ -674,7 +674,7 @@ impl App {
             help_scroll_max: 0,
             log_scroll_max: 0,
             diff_scroll_max: 0,
-            caps: crate::ops::Capabilities::default(),
+            caps: crate::tui::ops::Capabilities::default(),
             caps_rx: None,
         }
     }
@@ -2016,8 +2016,8 @@ impl App {
                 self.output.clear();
                 self.output.push(format!("$ termux-sync {title}"));
                 let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-                if lines.len() > crate::ops::LOG_LIMIT {
-                    lines = lines.split_off(lines.len() - crate::ops::LOG_LIMIT);
+                if lines.len() > crate::tui::ops::LOG_LIMIT {
+                    lines = lines.split_off(lines.len() - crate::tui::ops::LOG_LIMIT);
                 }
                 self.output.extend(lines);
                 self.output_offset = 0;
@@ -2226,8 +2226,8 @@ fn progress(tick: u64, start: u64, ticks: u64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::Config;
-    use crate::ops::{Kind, Status, test_operation, test_plan};
+    use crate::tui::data::Config;
+    use crate::tui::ops::{Kind, Status, test_operation, test_plan};
 
     fn snapshot() -> Snapshot {
         Snapshot {
@@ -2437,10 +2437,10 @@ mod tests {
         let mut app = App::with_snapshot(snapshot());
         app.output_offset = 50;
         app.help_scroll = 50;
-        app.apply_layout(crate::ui::UiLayout {
+        app.apply_layout(crate::tui::ui::UiLayout {
             output_scroll_max: 2,
             help_scroll_max: 1,
-            ..crate::ui::UiLayout::default()
+            ..crate::tui::ui::UiLayout::default()
         });
         assert_eq!(app.output_offset, 2);
         assert_eq!(app.help_scroll, 1);
@@ -2454,7 +2454,7 @@ mod tests {
         app.output_offset = 3;
         app.screen = Screen::Operation;
         app.operation = Some(test_operation(Kind::Backup));
-        app.apply_layout(crate::ui::UiLayout::default());
+        app.apply_layout(crate::tui::ui::UiLayout::default());
         assert_eq!(app.output_offset, 3);
     }
 
@@ -2783,7 +2783,7 @@ mod tests {
     #[test]
     fn status_report_opens_and_closes() {
         let mut app = App::with_snapshot(snapshot());
-        let report = crate::data::StatusReport {
+        let report = crate::tui::data::StatusReport {
             storage: "github".into(),
             target: "me/backups @ main".into(),
             compression: "xz".into(),
@@ -2793,7 +2793,7 @@ mod tests {
             config_path: "~/.config/termux-sync/config.json".into(),
             log_path: "~/.config/termux-sync/sync.log".into(),
             history_path: "~/.config/termux-sync/tui-history.json".into(),
-            tools: vec![crate::data::ToolStatus {
+            tools: vec![crate::tui::data::ToolStatus {
                 name: "rclone",
                 path: None,
                 required: true,

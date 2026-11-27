@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::data::{self, Backup};
+use crate::tui::data::{self, Backup};
 
 const MAX_LINE: usize = 64 * 1024;
 pub(crate) const LOG_LIMIT: usize = 200;
@@ -1835,7 +1835,7 @@ mod fixture_tests {
 
     #[test]
     fn parses_list_fixture() {
-        let text = include_str!("../tests/fixtures/list.jsonl");
+        let text = include_str!("../../tests/fixtures/list.jsonl");
         let mut backups = Vec::new();
         let mut result = false;
         for line in text.lines() {
@@ -1852,7 +1852,7 @@ mod fixture_tests {
 
     #[test]
     fn truncated_fixture_does_not_panic() {
-        let text = include_str!("../tests/fixtures/malformed.jsonl");
+        let text = include_str!("../../tests/fixtures/malformed.jsonl");
         let parsed: Vec<_> = text.lines().map(parse_event).collect();
         assert!(parsed[0].is_err());
         assert!(parsed[1].is_ok());
