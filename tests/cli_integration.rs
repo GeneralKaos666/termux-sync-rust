@@ -101,7 +101,7 @@ impl Fixture {
         stdin: Option<&str>,
         extra_env: &[(&str, &str)],
     ) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_termux-sync-rs"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_termux-sync"));
         command
             .args(args)
             .env_clear()
