@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 if [ "$#" -ne 4 ]; then

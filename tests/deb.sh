@@ -10,7 +10,7 @@ VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].ver
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-bash scripts/build-deb.sh aarch64 "$VERSION" target/release "$TMP"
+./scripts/build-deb.sh aarch64 "$VERSION" target/release "$TMP"
 
 DEB="$TMP/termux-sync_${VERSION}_aarch64.deb"
 test -f "$DEB"
