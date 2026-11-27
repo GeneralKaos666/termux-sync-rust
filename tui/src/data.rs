@@ -314,12 +314,13 @@ pub fn is_safe_backup_name(name: &str) -> bool {
         && name != ".."
         && !name.contains('/')
         && !name.contains('\\')
+        && !name.chars().any(char::is_control)
 }
 
 /// Timestamp shown in tables: controls removed, date and time, `T` -> space.
 #[must_use]
 pub fn normalize_date(text: &str) -> String {
-    strip_controls(text)
+    strip_line_controls(text)
         .chars()
         .take(16)
         .collect::<String>()
@@ -342,19 +343,29 @@ pub fn strip_controls(text: &str) -> Cow<'_, str> {
     )
 }
 
+/// Removes every control character, for text that must fit one terminal line.
+#[must_use]
+pub fn strip_line_controls(text: &str) -> Cow<'_, str> {
+    if !text.chars().any(char::is_control) {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(text.chars().filter(|ch| !ch.is_control()).collect())
+}
+
 /// Reads a backup summary from a manifest value.
 ///
 /// Returns `None` when the name is missing or unsafe; other fields degrade to placeholders.
 pub fn parse_manifest(value: &Value) -> Option<Backup> {
-    let name = strip_controls(value.get("name")?.as_str()?);
-    if !is_safe_backup_name(&name) {
+    let raw_name = value.get("name")?.as_str()?;
+    if !is_safe_backup_name(raw_name) {
         return None;
     }
+    let name = raw_name.to_string();
     let label = value
         .get("label")
         .and_then(Value::as_str)
-        .filter(|label| !label.is_empty() && *label != name)
-        .map_or_default(strip_controls)
+        .filter(|label| !label.is_empty() && *label != name.as_str())
+        .map_or_default(strip_line_controls)
         .into_owned();
     let date = normalize_date(value.get("date").and_then(Value::as_str).unwrap_or("—"));
     let packages = value
@@ -371,13 +382,13 @@ pub fn parse_manifest(value: &Value) -> Option<Backup> {
                 .sum()
         });
     Some(Backup {
-        name: name.into_owned(),
+        name,
         date,
         label,
         packages,
         size,
-        version: strip_controls(&string_field(value, "version", "—")).into_owned(),
-        compression: strip_controls(&string_field(value, "compression", "—")).to_uppercase(),
+        version: strip_line_controls(&string_field(value, "version", "—")).into_owned(),
+        compression: strip_line_controls(&string_field(value, "compression", "—")).to_uppercase(),
         modified: None,
     })
 }
@@ -699,11 +710,7 @@ pub fn daemon_activity(lines: &[String]) -> Vec<String> {
 }
 
 fn string_field(value: &Value, key: &str, default: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or(default)
-        .to_string()
+    strip_line_controls(value.get(key).and_then(Value::as_str).unwrap_or(default)).into_owned()
 }
 
 fn strip_ansi(text: &str) -> String {
@@ -985,6 +992,25 @@ mod task15_tests {
         }))
         .unwrap();
         assert!(!backup.label.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn manifest_and_config_text_is_single_line() {
+        let backup = parse_manifest(&serde_json::json!({
+            "name": "termux_backup_x",
+            "label": "two\nlines\there"
+        }))
+        .unwrap();
+        assert_eq!(backup.label, "twolineshere");
+
+        let config = parse_config(
+            &serde_json::json!({"storage": "github\n", "compression": "gz\t"}),
+            &serde_json::Value::Null,
+        );
+        assert_eq!(config.storage, "github");
+        assert_eq!(config.compression, "gz");
+
+        assert!(parse_manifest(&serde_json::json!({"name": "bad\nname"})).is_none());
     }
 
     #[test]

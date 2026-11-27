@@ -9,6 +9,7 @@ use ratatui::widgets::{ListState, TableState};
 use crate::data::{self, Backup, Snapshot};
 use crate::history::{HistoryEntry, HistoryStore};
 use crate::ops::{Kind, Operation, Status};
+use crate::ui::UiLayout;
 
 /// Top-level screen shown by the renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -328,6 +329,7 @@ pub enum WorkerMsg {
 pub struct Worker {
     rx: Option<Receiver<Result<WorkerMsg, String>>>,
     busy: bool,
+    writes: bool,
 }
 
 /// Transient card shown while a foreground command runs.
@@ -351,16 +353,33 @@ impl Worker {
         self.busy
     }
 
+    /// Whether the in-flight task runs a command that must not be abandoned.
+    #[must_use]
+    pub fn writes(&self) -> bool {
+        self.busy && self.writes
+    }
+
     /// Spawns `task` unless one is already running, returning whether it started.
     pub fn start(&mut self, task: Task) -> bool {
         if self.busy {
             return false;
         }
+        self.writes = matches!(&task, Task::Command(_));
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let result = match task {
                 Task::Refresh => Ok(WorkerMsg::Refreshed(data::load_snapshot())),
-                Task::ListBackups => crate::ops::collect_backups().map(WorkerMsg::Backups),
+                Task::ListBackups => match crate::ops::collect_backups() {
+                    Ok(backups) => Ok(WorkerMsg::Backups(backups)),
+                    // An old CLI has no event stream: fall back to captured text.
+                    Err(_) if !crate::ops::supports_events() => {
+                        data::run_captured(&["list".to_string()]).map(|text| WorkerMsg::Output {
+                            title: "list".to_string(),
+                            text,
+                        })
+                    }
+                    Err(error) => Err(error),
+                },
                 Task::Status(config) => Ok(WorkerMsg::Status(data::collect_status(&config))),
                 Task::Command(args) => data::run_captured(&args).map(|text| WorkerMsg::Output {
                     title: args.join(" "),
@@ -381,12 +400,14 @@ impl Worker {
             Ok(message) => {
                 self.rx = None;
                 self.busy = false;
+                self.writes = false;
                 Some(message)
             }
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {
                 self.rx = None;
                 self.busy = false;
+                self.writes = false;
                 Some(Err("background task stopped unexpectedly".to_string()))
             }
         }
@@ -537,6 +558,17 @@ pub struct App {
     pub backups_area: Rect,
     /// Output pane rectangle.
     pub output_area: Rect,
+    /// Max scroll offset of the Output pane, set by the renderer.
+    pub output_scroll_max: usize,
+    /// Max scroll offset of the help overlay, set by the renderer.
+    pub help_scroll_max: usize,
+    /// Max scroll offset of the operation log, set by the renderer.
+    pub log_scroll_max: usize,
+    /// Max scroll offset of the package diff, set by the renderer.
+    pub diff_scroll_max: usize,
+    /// CLI features probed at startup.
+    pub caps: crate::ops::Capabilities,
+    caps_rx: Option<Receiver<crate::ops::Capabilities>>,
 }
 
 impl Default for App {
@@ -557,6 +589,11 @@ impl App {
         app.history = history;
         app.loading = true;
         app.status = "loading backups…".to_string();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::ops::Capabilities::detect());
+        });
+        app.caps_rx = Some(rx);
         app.refresh();
         app.status = history_error.unwrap_or_else(|| "loading backups…".to_string());
         app
@@ -633,29 +670,111 @@ impl App {
             actions_area: Rect::default(),
             backups_area: Rect::default(),
             output_area: Rect::default(),
+            output_scroll_max: 0,
+            help_scroll_max: 0,
+            log_scroll_max: 0,
+            diff_scroll_max: 0,
+            caps: crate::ops::Capabilities::default(),
+            caps_rx: None,
         }
     }
 
-    /// Opens the help overlay from the top.
+    /// Opens the help overlay from the top, closing any other overlay.
     pub fn open_help(&mut self) {
+        self.close_panels();
         self.show_help = true;
         self.help_opened_at = self.tick;
         self.help_scroll = 0;
     }
 
-    /// Opens the status overlay with `report`.
+    /// Opens the status overlay with `report`, closing any other overlay.
     pub fn open_status_report(&mut self, report: data::StatusReport) {
+        self.close_panels();
         self.status_report = Some(report);
         self.show_status = true;
         self.status_scroll = 0;
     }
 
-    /// Loads daemon activity and opens the daemon overlay.
+    /// Loads daemon activity and opens the daemon overlay, closing any other.
     pub fn open_daemon(&mut self) {
+        self.close_panels();
         self.daemon_log = data::daemon_activity(&data::tail_log(500));
         self.daemon_boot_present = data::boot_script_path().is_file();
         self.show_daemon = true;
         self.daemon_scroll = 0;
+    }
+
+    /// Closes every overlay so at most one is ever open.
+    fn close_panels(&mut self) {
+        self.show_help = false;
+        self.show_history = false;
+        self.show_status = false;
+        self.show_daemon = false;
+        self.help_scroll = 0;
+        self.status_scroll = 0;
+        self.daemon_scroll = 0;
+    }
+
+    /// Stores the layout produced by the last frame and clamps scroll offsets.
+    pub fn apply_layout(&mut self, layout: UiLayout) {
+        self.header_areas = layout.header;
+        self.stat_areas = layout.stat_areas;
+        self.actions_area = layout.actions_area;
+        self.backups_area = layout.backups_area;
+        self.output_area = layout.output_area;
+        self.confirm_yes = layout.confirm_yes;
+        self.confirm_no = layout.confirm_no;
+        self.input_yes = layout.input_yes;
+        self.input_no = layout.input_no;
+        self.handoff_yes = layout.handoff_yes;
+        self.handoff_no = layout.handoff_no;
+
+        self.output_scroll_max = layout.output_scroll_max;
+        self.help_scroll_max = layout.help_scroll_max;
+        self.status_scroll_max = layout.status_scroll_max;
+        self.daemon_scroll_max = layout.daemon_scroll_max;
+        self.log_scroll_max = layout.log_scroll_max;
+        self.diff_scroll_max = layout.diff_scroll_max;
+
+        if self.screen == Screen::Dashboard {
+            self.output_offset = self.output_offset.min(self.output_scroll_max);
+            self.help_scroll = self.help_scroll.min(self.help_scroll_max);
+            self.status_scroll = self.status_scroll.min(self.status_scroll_max);
+            self.daemon_scroll = self.daemon_scroll.min(self.daemon_scroll_max);
+        }
+        if let Some(operation) = &mut self.operation {
+            operation.log_offset = operation.log_offset.min(self.log_scroll_max);
+            operation.diff_scroll = operation.diff_scroll.min(self.diff_scroll_max);
+        }
+    }
+
+    /// Applies the CLI capabilities probed at startup. Returns whether they arrived.
+    pub fn poll_capabilities(&mut self) -> bool {
+        let Some(rx) = &self.caps_rx else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(caps) => {
+                self.caps = caps;
+                self.caps_rx = None;
+                true
+            }
+            Err(mpsc::TryRecvError::Empty) => false,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                // The probe died: keep the optimistic defaults.
+                self.caps_rx = None;
+                true
+            }
+        }
+    }
+
+    /// Quits unless a background command is still writing to its output pipe.
+    fn request_quit(&mut self) {
+        if self.worker.writes() {
+            self.status = "a command is still running — wait, or press Ctrl+C to quit".to_string();
+            return;
+        }
+        self.should_quit = true;
     }
 
     /// Animation progress for the help overlay; `1.0` when motion is reduced.
@@ -776,10 +895,7 @@ impl App {
         if self.handle_key_ctrl_c(code, modifiers) {
             return;
         }
-        if self.pending_confirm.is_some() {
-            self.handle_key_confirm(code);
-            return;
-        }
+        // Routing order mirrors the render order: the topmost overlay owns keys.
         if self.pending_handoff.is_some() {
             self.handle_key_handoff(code);
             return;
@@ -788,32 +904,35 @@ impl App {
             self.handle_input_key(code, modifiers);
             return;
         }
-        if self.backup_filtering {
-            self.handle_backups_key(code);
-            return;
-        }
-        if self.show_history {
-            self.handle_key_history(code);
-            return;
-        }
-        if self.show_status {
-            self.handle_key_status(code);
-            return;
-        }
-        if self.show_daemon {
-            self.handle_key_daemon(code);
+        if self.pending_confirm.is_some() {
+            self.handle_key_confirm(code);
             return;
         }
         if self.operation.is_some() {
             self.handle_operation_key(code, modifiers);
             return;
         }
-
-        if self.pending.is_some() {
+        if self.backup_filtering {
+            self.handle_backups_key(code);
+            return;
+        }
+        if self.show_daemon {
+            self.handle_key_daemon(code);
+            return;
+        }
+        if self.show_status {
+            self.handle_key_status(code);
+            return;
+        }
+        if self.show_history {
+            self.handle_key_history(code);
             return;
         }
         if self.show_help {
             self.handle_key_help(code);
+            return;
+        }
+        if self.pending.is_some() {
             return;
         }
 
@@ -967,11 +1086,15 @@ impl App {
                 self.show_help = false;
                 self.help_scroll = 0;
             }
-            KeyCode::Down | KeyCode::Char('j') => self.help_scroll += 1,
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.help_scroll = self.help_scroll.saturating_add(1).min(self.help_scroll_max);
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.help_scroll = self.help_scroll.saturating_sub(1);
             }
-            KeyCode::PageDown => self.help_scroll += 5,
+            KeyCode::PageDown => {
+                self.help_scroll = self.help_scroll.saturating_add(5).min(self.help_scroll_max);
+            }
             KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(5),
             _ => {}
         }
@@ -980,7 +1103,7 @@ impl App {
     /// Global shortcuts, then keys routed to the focused pane.
     fn handle_key_dashboard(&mut self, code: KeyCode) {
         match code {
-            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('q') => self.request_quit(),
             KeyCode::Char('?') => self.open_help(),
             KeyCode::Tab => self.switch_focus(self.focus.next()),
             KeyCode::BackTab => self.switch_focus(self.focus.previous()),
@@ -988,6 +1111,7 @@ impl App {
             KeyCode::Char('L') => self.run(Action::List),
             KeyCode::Char('s') => self.run(Action::Status),
             KeyCode::Char('h') => {
+                self.close_panels();
                 self.show_history = true;
                 self.history_selected = 0;
             }
@@ -1004,12 +1128,6 @@ impl App {
     }
 
     fn handle_input_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
-        if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c' | 'C')) {
-            self.pending_input = None;
-            self.input_text.clear();
-            self.should_quit = true;
-            return;
-        }
         let Some(prompt) = self.pending_input else {
             return;
         };
@@ -1125,7 +1243,10 @@ impl App {
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
                         if let Some(operation) = &mut self.operation {
-                            operation.log_offset = operation.log_offset.saturating_add(1);
+                            operation.log_offset = operation
+                                .log_offset
+                                .saturating_add(1)
+                                .min(self.log_scroll_max);
                         }
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
@@ -1135,7 +1256,10 @@ impl App {
                     }
                     KeyCode::PageUp => {
                         if let Some(operation) = &mut self.operation {
-                            operation.log_offset = operation.log_offset.saturating_add(10);
+                            operation.log_offset = operation
+                                .log_offset
+                                .saturating_add(10)
+                                .min(self.log_scroll_max);
                         }
                     }
                     KeyCode::PageDown => {
@@ -1150,7 +1274,7 @@ impl App {
                     }
                     KeyCode::Char('g') | KeyCode::Home => {
                         if let Some(operation) = &mut self.operation {
-                            operation.log_offset = usize::MAX / 2;
+                            operation.log_offset = self.log_scroll_max;
                         }
                     }
                     _ => {}
@@ -1251,15 +1375,23 @@ impl App {
                 operation.diff_scroll = 0;
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                operation.diff_scroll = operation.diff_scroll.saturating_add(1);
+                operation.diff_scroll = operation
+                    .diff_scroll
+                    .saturating_add(1)
+                    .min(self.diff_scroll_max);
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 operation.diff_scroll = operation.diff_scroll.saturating_sub(1);
             }
-            KeyCode::PageUp => operation.diff_scroll = operation.diff_scroll.saturating_add(10),
+            KeyCode::PageUp => {
+                operation.diff_scroll = operation
+                    .diff_scroll
+                    .saturating_add(10)
+                    .min(self.diff_scroll_max);
+            }
             KeyCode::PageDown => operation.diff_scroll = operation.diff_scroll.saturating_sub(10),
             KeyCode::Char('G') | KeyCode::End => operation.diff_scroll = 0,
-            KeyCode::Char('g') | KeyCode::Home => operation.diff_scroll = usize::MAX / 2,
+            KeyCode::Char('g') | KeyCode::Home => operation.diff_scroll = self.diff_scroll_max,
             _ => {}
         }
     }
@@ -1271,12 +1403,13 @@ impl App {
     }
 
     fn start_operation(&mut self, kind: Kind, name: &str, args: Vec<String>) {
-        if !crate::ops::supports_events() {
+        if self.caps.known && !self.caps.events {
             self.status =
                 "installed termux-sync is too old for the TUI (missing --json-events). Update it."
                     .to_string();
             return;
         }
+        self.close_panels();
         match Operation::start(kind, name, args, self.reduce_motion) {
             Ok(operation) => {
                 self.operation = Some(operation);
@@ -1434,7 +1567,7 @@ impl App {
     /// Routes a left click to overlays, then to the pane under the pointer.
     pub fn handle_mouse(&mut self, column: u16, row: u16) {
         let point = Position::new(column, row);
-        if self.show_status || self.show_daemon {
+        if self.show_status || self.show_daemon || self.show_history {
             return;
         }
         if self.pending_handoff.is_some() {
@@ -1628,15 +1761,25 @@ impl App {
 
     fn handle_output_key(&mut self, code: KeyCode) {
         match code {
-            KeyCode::Up | KeyCode::Char('k') => self.output_offset += 1,
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.output_offset = self
+                    .output_offset
+                    .saturating_add(1)
+                    .min(self.output_scroll_max);
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.output_offset = self.output_offset.saturating_sub(1);
             }
-            KeyCode::PageUp => self.output_offset += 10,
+            KeyCode::PageUp => {
+                self.output_offset = self
+                    .output_offset
+                    .saturating_add(10)
+                    .min(self.output_scroll_max);
+            }
             KeyCode::PageDown => self.output_offset = self.output_offset.saturating_sub(10),
             KeyCode::Char('[') => self.adjust_log_lines(-200),
             KeyCode::Char(']') => self.adjust_log_lines(200),
-            KeyCode::Char('g') | KeyCode::Home => self.output_offset = usize::MAX / 2,
+            KeyCode::Char('g') | KeyCode::Home => self.output_offset = self.output_scroll_max,
             KeyCode::Char('G') | KeyCode::End => self.output_offset = 0,
             _ => {}
         }
@@ -1682,6 +1825,7 @@ impl App {
 
     /// Starts `action`, opening prompts or confirmation where required.
     pub fn run(&mut self, action: Action) {
+        self.close_panels();
         match action {
             Action::Backup => {
                 self.pending_input = Some(InputPrompt::BackupLabel);
@@ -1703,15 +1847,7 @@ impl App {
                     self.status = "no backup selected".to_string();
                 }
             }
-            Action::List => {
-                if crate::ops::supports_events() {
-                    self.start_task(Task::ListBackups);
-                } else {
-                    self.start_task(Task::Command(vec!["list".to_string()]));
-                    self.status =
-                        "termux-sync is too old for structured list; using text output".to_string();
-                }
-            }
+            Action::List => self.start_task(Task::ListBackups),
             Action::Logs => {
                 self.output_source = OutputSource::Log;
                 self.output = data::tail_log(self.log_lines);
@@ -1754,12 +1890,14 @@ impl App {
             Action::ClearCache => self.pending_confirm = Some(Action::ClearCache),
             Action::Refresh => self.refresh(),
             Action::Help => self.open_help(),
-            Action::Quit => self.should_quit = true,
+            Action::Quit => self.request_quit(),
         }
     }
 
     fn execute_confirmed_action(&mut self, action: Action) {
-        self.execute_confirmed_action_with(action, crate::ops::supports_yes());
+        // Unknown capabilities stay optimistic; the probe only ever removes a feature.
+        let yes_supported = !self.caps.known || self.caps.yes;
+        self.execute_confirmed_action_with(action, yes_supported);
     }
 
     fn execute_confirmed_action_with(&mut self, action: Action, yes_supported: bool) {
@@ -1842,7 +1980,7 @@ impl App {
 
     /// Reloads backups and status in the background.
     pub fn refresh(&mut self) {
-        if self.snapshot.config.storage != "local" && crate::ops::supports_events() {
+        if self.snapshot.config.storage != "local" && self.caps.events {
             self.start_task(Task::ListBackups);
         } else {
             self.start_task(Task::Refresh);
@@ -1865,8 +2003,13 @@ impl App {
             Ok(WorkerMsg::Refreshed(snapshot)) => self.apply_snapshot(snapshot),
             Ok(WorkerMsg::Backups(backups)) => self.apply_backup_list(backups),
             Ok(WorkerMsg::Status(report)) => {
-                self.open_status_report(report);
-                self.status = "status ready".to_string();
+                if self.operation.is_some() {
+                    // Never stack an overlay on the operation screen; `s` re-collects.
+                    self.status = "status ready — press s after the operation".to_string();
+                } else {
+                    self.open_status_report(report);
+                    self.status = "status ready".to_string();
+                }
             }
             Ok(WorkerMsg::Output { title, text }) => {
                 self.output_source = OutputSource::Command;
@@ -1887,21 +2030,26 @@ impl App {
                     self.refresh();
                 }
             }
-            Err(err) => {
-                self.output_source = OutputSource::Command;
-                self.output.clear();
-                self.output.extend(err.lines().map(str::to_string));
-                self.output_offset = 0;
-                self.switch_focus(Focus::Output);
-                self.status = "command failed".to_string();
-            }
+            Err(err) => self.apply_worker_error(err),
         }
         true
+    }
+
+    /// Shows a failed background command and clears the initial loading state.
+    fn apply_worker_error(&mut self, err: String) {
+        self.loading = false;
+        self.output_source = OutputSource::Command;
+        self.output.clear();
+        self.output.extend(err.lines().map(str::to_string));
+        self.output_offset = 0;
+        self.switch_focus(Focus::Output);
+        self.status = "command failed".to_string();
     }
 
     /// Replaces the backup list and reselects the first row.
     pub fn apply_backup_list(&mut self, backups: Vec<Backup>) {
         let count = backups.len();
+        self.loading = false;
         self.snapshot.backups = backups;
         self.backups_revision += 1;
         self.snapshot.warning = Vec::new();
@@ -2157,6 +2305,203 @@ mod tests {
         let mut app = App::with_snapshot(snapshot());
         app.handle_key(KeyCode::Char('q'));
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn quit_is_refused_while_a_background_command_runs() {
+        let mut app = App::with_snapshot(snapshot());
+        app.start_task(Task::Command(vec!["check".to_string()]));
+        app.handle_key(KeyCode::Char('q'));
+        assert!(!app.should_quit);
+        assert!(app.status.contains("still running"));
+    }
+
+    #[test]
+    fn quit_is_allowed_while_only_a_refresh_runs() {
+        let mut app = App::with_snapshot(snapshot());
+        app.start_task(Task::Refresh);
+        app.handle_key(KeyCode::Char('q'));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn quit_action_is_refused_while_a_background_command_runs() {
+        let mut app = App::with_snapshot(snapshot());
+        app.start_task(Task::Command(vec!["check".to_string()]));
+        app.run(Action::Quit);
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn opening_status_closes_help() {
+        let mut app = App::with_snapshot(snapshot());
+        app.open_help();
+        app.open_status_report(status_report());
+        assert!(!app.show_help);
+        assert!(app.show_status);
+    }
+
+    #[test]
+    fn opening_daemon_closes_status() {
+        let mut app = App::with_snapshot(snapshot());
+        app.open_status_report(status_report());
+        app.open_daemon();
+        assert!(!app.show_status);
+        assert!(app.show_daemon);
+    }
+
+    #[test]
+    fn keys_follow_the_topmost_overlay() {
+        let mut app = App::with_snapshot(snapshot());
+        app.status_scroll_max = 3;
+        app.show_help = true;
+        app.show_status = true;
+        app.handle_key(KeyCode::Down);
+        assert_eq!(app.status_scroll, 1);
+        assert_eq!(app.help_scroll, 0);
+    }
+
+    #[test]
+    fn help_scroll_stops_at_the_rendered_limit() {
+        let mut app = App::with_snapshot(snapshot());
+        app.help_scroll_max = 3;
+        app.open_help();
+        for _ in 0..10 {
+            app.handle_key(KeyCode::Down);
+        }
+        assert_eq!(app.help_scroll, 3);
+        app.handle_key(KeyCode::Up);
+        assert_eq!(app.help_scroll, 2);
+    }
+
+    #[test]
+    fn output_scroll_stops_at_the_rendered_limit() {
+        let mut app = App::with_snapshot(snapshot());
+        app.output_scroll_max = 3;
+        app.focus = Focus::Output;
+        for _ in 0..10 {
+            app.handle_key(KeyCode::Up);
+        }
+        assert_eq!(app.output_offset, 3);
+        app.handle_key(KeyCode::Down);
+        assert_eq!(app.output_offset, 2);
+    }
+
+    #[test]
+    fn operation_log_scroll_stops_at_the_rendered_limit() {
+        let mut app = App::with_snapshot(snapshot());
+        app.log_scroll_max = 2;
+        app.operation = Some(test_operation(Kind::Backup));
+        app.screen = Screen::Operation;
+        for _ in 0..10 {
+            app.handle_key(KeyCode::Up);
+        }
+        assert_eq!(app.operation.as_ref().unwrap().log_offset, 2);
+    }
+
+    #[test]
+    fn diff_scroll_stops_at_the_rendered_limit() {
+        let mut app = App::with_snapshot(snapshot());
+        app.diff_scroll_max = 2;
+        let mut operation = test_operation(Kind::Restore);
+        operation.status = Status::AwaitingConfirm;
+        operation.plan = Some(test_plan());
+        operation.diff_open = true;
+        app.operation = Some(operation);
+        app.screen = Screen::Operation;
+        for _ in 0..10 {
+            app.handle_key(KeyCode::Up);
+        }
+        assert_eq!(app.operation.as_ref().unwrap().diff_scroll, 2);
+    }
+
+    #[test]
+    fn backup_list_clears_the_loading_state() {
+        let mut app = App::with_snapshot(snapshot());
+        app.loading = true;
+        app.apply_backup_list(Vec::new());
+        assert!(!app.loading);
+    }
+
+    #[test]
+    fn worker_error_clears_the_loading_state() {
+        let mut app = App::with_snapshot(snapshot());
+        app.loading = true;
+        app.apply_worker_error("boom".to_string());
+        assert!(!app.loading);
+        assert_eq!(app.status, "command failed");
+    }
+
+    #[test]
+    fn apply_layout_clamps_scroll_positions() {
+        let mut app = App::with_snapshot(snapshot());
+        app.output_offset = 50;
+        app.help_scroll = 50;
+        app.apply_layout(crate::ui::UiLayout {
+            output_scroll_max: 2,
+            help_scroll_max: 1,
+            ..crate::ui::UiLayout::default()
+        });
+        assert_eq!(app.output_offset, 2);
+        assert_eq!(app.help_scroll, 1);
+        assert_eq!(app.output_scroll_max, 2);
+        assert_eq!(app.help_scroll_max, 1);
+    }
+
+    #[test]
+    fn operation_layout_keeps_the_dashboard_scroll() {
+        let mut app = App::with_snapshot(snapshot());
+        app.output_offset = 3;
+        app.screen = Screen::Operation;
+        app.operation = Some(test_operation(Kind::Backup));
+        app.apply_layout(crate::ui::UiLayout::default());
+        assert_eq!(app.output_offset, 3);
+    }
+
+    #[test]
+    fn status_result_does_not_open_over_an_operation() {
+        let mut app = App::with_snapshot(snapshot());
+        app.operation = Some(test_operation(Kind::Backup));
+        app.screen = Screen::Operation;
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Ok(WorkerMsg::Status(status_report()))).unwrap();
+        app.worker = Worker {
+            rx: Some(rx),
+            busy: true,
+            writes: false,
+        };
+        assert!(app.poll_worker());
+        assert!(!app.show_status);
+        assert!(app.status.contains("after the operation"));
+    }
+
+    #[test]
+    fn history_overlay_swallows_clicks() {
+        let mut app = App::with_snapshot(snapshot());
+        app.actions_area = Rect::new(0, 0, 26, 20);
+        app.show_history = true;
+        let help_row = ACTIONS
+            .iter()
+            .position(|item| item.action == Action::Help)
+            .unwrap() as u16
+            + 1;
+        app.handle_mouse(2, help_row);
+        assert!(!app.show_help);
+    }
+
+    fn status_report() -> data::StatusReport {
+        data::StatusReport {
+            storage: "local".into(),
+            target: "~/termux-backups".into(),
+            compression: "gz".into(),
+            max_backups: 5,
+            schedule: "off".into(),
+            cli_version: None,
+            config_path: "~/.config/termux-sync/config.json".into(),
+            log_path: "~/.config/termux-sync/sync.log".into(),
+            history_path: "~/.config/termux-sync/tui-history.json".into(),
+            tools: Vec::new(),
+        }
     }
 
     #[test]
@@ -2658,6 +3003,7 @@ mod tests {
     #[test]
     fn help_scroll_moves_without_leaving_bounds() {
         let mut app = App::with_snapshot(snapshot());
+        app.help_scroll_max = 10;
         app.open_help();
         app.handle_key(KeyCode::Down);
         assert_eq!(app.help_scroll, 1);

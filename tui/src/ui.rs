@@ -11,7 +11,7 @@ use ratatui::widgets::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{ACTIONS, Action, App, Focus, OutputSource, Screen};
+use crate::app::{ACTIONS, Action, App, Focus, HeaderAreas, OutputSource, Screen};
 use crate::data::{backup_age, human_size, parse_log_line};
 use crate::ops::{Kind, Operation, Plan, StageState, Status};
 
@@ -53,26 +53,60 @@ pub fn plan(area: Rect) -> LayoutPlan {
     }
 }
 
-/// Renders one frame and records pane rectangles on `app` for hit testing.
-pub fn draw(frame: &mut Frame, app: &mut App) {
+/// Rectangles and scroll limits produced by one frame, for hit testing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UiLayout {
+    /// Header hit-test regions.
+    pub header: HeaderAreas,
+    /// Stat tile hit-test regions.
+    pub stat_areas: [Rect; 4],
+    /// Actions pane rectangle.
+    pub actions_area: Rect,
+    /// Backups pane rectangle.
+    pub backups_area: Rect,
+    /// Output pane rectangle.
+    pub output_area: Rect,
+    /// Confirm button rectangles.
+    pub confirm_yes: Rect,
+    /// Confirm cancel rectangle.
+    pub confirm_no: Rect,
+    /// Input confirm button rectangle.
+    pub input_yes: Rect,
+    /// Input cancel button rectangle.
+    pub input_no: Rect,
+    /// Handoff continue button rectangle.
+    pub handoff_yes: Rect,
+    /// Handoff cancel button rectangle.
+    pub handoff_no: Rect,
+    /// Max scroll offset of the help overlay.
+    pub help_scroll_max: usize,
+    /// Max scroll offset of the Output pane.
+    pub output_scroll_max: usize,
+    /// Max scroll offset of the status overlay.
+    pub status_scroll_max: usize,
+    /// Max scroll offset of the daemon overlay.
+    pub daemon_scroll_max: usize,
+    /// Max scroll offset of the operation log.
+    pub log_scroll_max: usize,
+    /// Max scroll offset of the package diff.
+    pub diff_scroll_max: usize,
+}
+
+/// Renders one frame and returns the hit-test layout for the input loop.
+pub fn draw(frame: &mut Frame, app: &mut App) -> UiLayout {
     let area = frame.area();
+    let mut layout = UiLayout::default();
 
     if app.screen == Screen::Operation
         && let Some(operation) = &app.operation
     {
-        render_operation(frame, area, app, operation);
-        return;
+        render_operation(frame, area, app, operation, &mut layout);
+        return layout;
     }
-
-    app.header_areas = Default::default();
-    app.stat_areas = [Rect::default(); 4];
-    app.actions_area = Rect::default();
-    app.backups_area = Rect::default();
-    app.output_area = Rect::default();
 
     if plan(area) == LayoutPlan::TooSmall {
         render_too_small(frame, area);
-        return;
+        return layout;
     }
 
     let show_cards = area.width >= SPLIT_WIDTH && area.height >= 20;
@@ -86,10 +120,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         ])
         .areas(area);
 
-        render_hero(frame, hero, app);
-        render_stats(frame, cards, app);
-        render_body(frame, body, app);
+        let (count, warning) = render_hero(frame, hero, app);
+        layout.header.count = count;
+        layout.header.warning = warning;
+        layout.stat_areas = render_stats(frame, cards, app);
+        render_body(frame, body, app, &mut layout);
         render_footer(frame, footer, app);
+        layout.header.status = Rect {
+            x: footer.x,
+            y: footer.y,
+            width: footer.width,
+            height: 1,
+        };
     } else {
         let [hero, body, footer] = Layout::vertical([
             Constraint::Length(3),
@@ -98,13 +140,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         ])
         .areas(area);
 
-        render_hero(frame, hero, app);
-        render_body(frame, body, app);
+        let (count, warning) = render_hero(frame, hero, app);
+        layout.header.count = count;
+        layout.header.warning = warning;
+        render_body(frame, body, app, &mut layout);
         render_footer(frame, footer, app);
+        layout.header.status = Rect {
+            x: footer.x,
+            y: footer.y,
+            width: footer.width,
+            height: 1,
+        };
     }
 
     if app.show_help {
-        render_help(frame, area, app);
+        layout.help_scroll_max = render_help(frame, area, app);
     }
 
     if app.show_history {
@@ -112,13 +162,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     if app.show_status {
-        let max_scroll = render_status(frame, area, app);
-        app.status_scroll_max = max_scroll;
-        app.status_scroll = app.status_scroll.min(max_scroll);
+        layout.status_scroll_max = render_status(frame, area, app);
     }
 
     if app.show_daemon {
-        render_daemon(frame, area, app);
+        layout.daemon_scroll_max = render_daemon(frame, area, app);
     }
 
     if app.task.as_ref().is_some_and(|task| task.visible) {
@@ -126,21 +174,29 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     if let Some(action) = app.pending_confirm {
-        render_action_confirm(frame, area, app, action);
+        let (yes, no) = render_action_confirm(frame, area, app, action);
+        layout.confirm_yes = yes;
+        layout.confirm_no = no;
     }
 
     if app.pending_input.is_some() {
-        render_input_prompt(frame, area, app);
+        let (yes, no) = render_input_prompt(frame, area, app);
+        layout.input_yes = yes;
+        layout.input_no = no;
     }
 
     if app.pending_handoff.is_some() {
-        render_handoff(frame, area, app);
+        let (yes, no) = render_handoff(frame, area, app);
+        layout.handoff_yes = yes;
+        layout.handoff_no = no;
     }
+
+    layout
 }
 
-fn render_handoff(frame: &mut Frame, area: Rect, app: &mut App) {
+fn render_handoff(frame: &mut Frame, area: Rect, app: &App) -> (Rect, Rect) {
     let Some(handoff) = &app.pending_handoff else {
-        return;
+        return (Rect::default(), Rect::default());
     };
     let popup = centered(area, area.width.saturating_sub(6).clamp(36, 64), 9);
     let inner = Rect {
@@ -150,13 +206,13 @@ fn render_handoff(frame: &mut Frame, area: Rect, app: &mut App) {
         height: popup.height.saturating_sub(2),
     };
     let half = inner.width / 2;
-    app.handoff_yes = Rect {
+    let yes = Rect {
         x: inner.x,
         y: inner.y + inner.height.saturating_sub(1),
         width: half,
         height: 1,
     };
-    app.handoff_no = Rect {
+    let no = Rect {
         x: inner.x + half,
         y: inner.y + inner.height.saturating_sub(1),
         width: inner.width.saturating_sub(half),
@@ -189,11 +245,12 @@ fn render_handoff(frame: &mut Frame, area: Rect, app: &mut App) {
             .wrap(Wrap { trim: true }),
         popup,
     );
+    (yes, no)
 }
 
-fn render_input_prompt(frame: &mut Frame, area: Rect, app: &mut App) {
+fn render_input_prompt(frame: &mut Frame, area: Rect, app: &App) -> (Rect, Rect) {
     let Some(prompt) = app.pending_input else {
-        return;
+        return (Rect::default(), Rect::default());
     };
     let popup = centered(area, area.width.saturating_sub(6).clamp(32, 58), 7);
     let inner = Rect {
@@ -203,13 +260,13 @@ fn render_input_prompt(frame: &mut Frame, area: Rect, app: &mut App) {
         height: popup.height.saturating_sub(2),
     };
     let half = inner.width / 2;
-    app.input_yes = Rect {
+    let yes = Rect {
         x: inner.x,
         y: inner.y + inner.height.saturating_sub(1),
         width: half,
         height: 1,
     };
-    app.input_no = Rect {
+    let no = Rect {
         x: inner.x + half,
         y: inner.y + inner.height.saturating_sub(1),
         width: inner.width.saturating_sub(half),
@@ -243,6 +300,7 @@ fn render_input_prompt(frame: &mut Frame, area: Rect, app: &mut App) {
         Paragraph::new(Text::from(lines)).block(op_block(prompt.title(), ACCENT)),
         popup,
     );
+    (yes, no)
 }
 
 fn clip_text(text: &str, width: usize) -> String {
@@ -280,7 +338,7 @@ fn tail_fit(text: &str, width: usize) -> String {
     format!("…{out}")
 }
 
-fn render_action_confirm(frame: &mut Frame, area: Rect, app: &mut App, action: Action) {
+fn render_action_confirm(frame: &mut Frame, area: Rect, app: &App, action: Action) -> (Rect, Rect) {
     let (title, message) = match action {
         Action::Delete => (
             "Delete backup",
@@ -292,7 +350,7 @@ fn render_action_confirm(frame: &mut Frame, area: Rect, app: &mut App, action: A
         ),
         Action::ClearCache => ("Clear cache", "Clear all cache directories?".to_string()),
         Action::ClearLogs => ("Clear logs", "Clear all log entries?".to_string()),
-        _ => return,
+        _ => return (Rect::default(), Rect::default()),
     };
     let popup = centered(area, area.width.saturating_sub(6).clamp(32, 58), 8);
     let lines = vec![
@@ -317,13 +375,13 @@ fn render_action_confirm(frame: &mut Frame, area: Rect, app: &mut App, action: A
     };
     let button_y = inner.y + inner.height.saturating_sub(1);
     let half = inner.width / 2;
-    app.confirm_yes = Rect {
+    let yes = Rect {
         x: inner.x,
         y: button_y,
         width: half,
         height: 1,
     };
-    app.confirm_no = Rect {
+    let no = Rect {
         x: inner.x + half,
         y: button_y,
         width: inner.width.saturating_sub(half),
@@ -337,9 +395,16 @@ fn render_action_confirm(frame: &mut Frame, area: Rect, app: &mut App, action: A
             .alignment(Alignment::Center),
         popup,
     );
+    (yes, no)
 }
 
-fn render_operation(frame: &mut Frame, area: Rect, app: &App, operation: &Operation) {
+fn render_operation(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    operation: &Operation,
+    layout: &mut UiLayout,
+) {
     let stage_height = if area.width >= 80 { 2 } else { 1 };
     let [header, stages, body, footer] = Layout::vertical([
         Constraint::Length(3),
@@ -352,12 +417,12 @@ fn render_operation(frame: &mut Frame, area: Rect, app: &App, operation: &Operat
     render_operation_header(frame, header, operation);
     render_operation_stages(frame, stages, operation, app.ascii);
     if operation.status == Status::AwaitingConfirm && operation.diff_open {
-        render_package_diff(frame, body, operation);
+        layout.diff_scroll_max = render_package_diff(frame, body, operation);
     } else {
         match operation.status {
             Status::AwaitingConfirm => render_restore_plan(frame, body, operation),
             Status::Running | Status::Cancelling => {
-                render_operation_running(frame, body, app, operation);
+                layout.log_scroll_max = render_operation_running(frame, body, app, operation);
             }
             Status::Succeeded | Status::Warnings => render_operation_result(frame, body, operation),
             Status::Failed => render_operation_failure(frame, body, operation),
@@ -487,7 +552,12 @@ fn render_operation_stages(frame: &mut Frame, area: Rect, operation: &Operation,
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn render_operation_running(frame: &mut Frame, area: Rect, app: &App, operation: &Operation) {
+fn render_operation_running(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    operation: &Operation,
+) -> usize {
     let [gauge_area, detail_area, log_area] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(1),
@@ -533,10 +603,10 @@ fn render_operation_running(frame: &mut Frame, area: Rect, app: &App, operation:
         detail_area,
     );
 
-    render_operation_log(frame, log_area, operation);
+    render_operation_log(frame, log_area, operation)
 }
 
-fn render_operation_log(frame: &mut Frame, area: Rect, operation: &Operation) {
+fn render_operation_log(frame: &mut Frame, area: Rect, operation: &Operation) -> usize {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(fg(MUTED))
@@ -553,7 +623,7 @@ fn render_operation_log(frame: &mut Frame, area: Rect, operation: &Operation) {
         lines.push(Line::from(vec![
             level_chip(&entry.level),
             Span::raw(" "),
-            Span::raw(crate::data::strip_controls(&entry.message)),
+            Span::raw(crate::data::strip_line_controls(&entry.message)),
         ]));
     }
 
@@ -564,6 +634,7 @@ fn render_operation_log(frame: &mut Frame, area: Rect, operation: &Operation) {
         .saturating_sub(1)
         .saturating_sub(offset);
     scrollbar(frame, area, operation.logs.len(), inner_height, position);
+    max_offset
 }
 
 fn render_restore_plan(frame: &mut Frame, area: Rect, operation: &Operation) {
@@ -680,9 +751,9 @@ fn expanded_plan_lines(operation: &Operation, plan: &Plan) -> Vec<Line<'static>>
     lines
 }
 
-fn render_package_diff(frame: &mut Frame, area: Rect, operation: &Operation) {
+fn render_package_diff(frame: &mut Frame, area: Rect, operation: &Operation) -> usize {
     let Some(plan) = &operation.plan else {
-        return;
+        return 0;
     };
     let narrow = area.width < 60;
     let show_filter =
@@ -740,6 +811,7 @@ fn render_package_diff(frame: &mut Frame, area: Rect, operation: &Operation) {
     frame.render_widget(Paragraph::new(Text::from(lines)).block(block), list_area);
     let position = packages.len().saturating_sub(1).saturating_sub(offset);
     scrollbar(frame, list_area, packages.len(), inner_height, position);
+    max_offset
 }
 
 fn package_diff_warning(plan: &Plan, narrow: bool) -> Text<'static> {
@@ -1167,7 +1239,7 @@ fn fmt_millis(millis: u64) -> String {
     fmt_elapsed(std::time::Duration::from_millis(millis))
 }
 
-fn render_hero(frame: &mut Frame, area: Rect, app: &mut App) {
+fn render_hero(frame: &mut Frame, area: Rect, app: &App) -> (Rect, Rect) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(fg(ACCENT))
@@ -1221,31 +1293,34 @@ fn render_hero(frame: &mut Frame, area: Rect, app: &mut App) {
         chips.push(Span::raw(" "));
         chips.push(Span::styled("WARN", fg(WARN).bold()));
     }
-    app.header_areas.count = Rect {
+    let count = Rect {
         x: right.x,
         y: right.y,
         width: right.width.saturating_sub(6),
         height: 1,
     };
-    if !app.snapshot.warning.is_empty() {
-        app.header_areas.warning = Rect {
+    let warning = if app.snapshot.warning.is_empty() {
+        Rect::default()
+    } else {
+        Rect {
             x: right.x + right.width.saturating_sub(5),
             y: right.y,
             width: 5,
             height: 1,
-        };
-    }
+        }
+    };
     frame.render_widget(
         Paragraph::new(Line::from(chips)).alignment(Alignment::Right),
         right,
     );
+    (count, warning)
 }
 
-fn render_stats(frame: &mut Frame, area: Rect, app: &mut App) {
-    let [backups, stored, packages, auto] = Layout::horizontal([Constraint::Fill(1); 4])
+fn render_stats(frame: &mut Frame, area: Rect, app: &App) -> [Rect; 4] {
+    let areas = Layout::horizontal([Constraint::Fill(1); 4])
         .spacing(1)
         .areas(area);
-    app.stat_areas = [backups, stored, packages, auto];
+    let [backups, stored, packages, auto] = areas;
 
     let total_size: u64 = app.snapshot.backups.iter().map(|backup| backup.size).sum();
     let latest_packages = app
@@ -1276,6 +1351,7 @@ fn render_stats(frame: &mut Frame, area: Rect, app: &mut App) {
         MAGENTA,
     );
     stat_card(frame, auto, "AUTO", &auto_value, "", WARN);
+    areas
 }
 
 fn stat_card(frame: &mut Frame, area: Rect, title: &str, value: &str, unit: &str, color: Color) {
@@ -1290,27 +1366,39 @@ fn stat_card(frame: &mut Frame, area: Rect, title: &str, value: &str, unit: &str
     frame.render_widget(Paragraph::new(line).block(block), area);
 }
 
-fn render_body(frame: &mut Frame, area: Rect, app: &mut App) {
-    if plan(frame.area()) == LayoutPlan::Split {
+fn render_body(frame: &mut Frame, area: Rect, app: &mut App, layout: &mut UiLayout) {
+    let split = plan(frame.area()) == LayoutPlan::Split;
+    if split {
         let [left, right] =
             Layout::horizontal([Constraint::Length(26), Constraint::Min(0)]).areas(area);
         let [backups, output] =
             Layout::vertical([Constraint::Percentage(55), Constraint::Percentage(45)]).areas(right);
 
+        layout.actions_area = left;
+        layout.backups_area = backups;
+        layout.output_area = output;
         render_actions(frame, left, app);
         render_backups(frame, backups, app);
-        render_output(frame, output, app);
+        layout.output_scroll_max = render_output(frame, output, app);
     } else {
         match app.focus {
-            Focus::Actions => render_actions(frame, area, app),
-            Focus::Backups => render_backups(frame, area, app),
-            Focus::Output => render_output(frame, area, app),
+            Focus::Actions => {
+                layout.actions_area = area;
+                render_actions(frame, area, app);
+            }
+            Focus::Backups => {
+                layout.backups_area = area;
+                render_backups(frame, area, app);
+            }
+            Focus::Output => {
+                layout.output_area = area;
+                layout.output_scroll_max = render_output(frame, area, app);
+            }
         }
     }
 }
 
 fn render_actions(frame: &mut Frame, area: Rect, app: &mut App) {
-    app.actions_area = area;
     let inner = area.width.saturating_sub(4) as usize;
     let label_width = inner.saturating_sub(3);
     let items: Vec<ListItem> = ACTIONS
@@ -1348,7 +1436,6 @@ fn render_actions(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_backups(frame: &mut Frame, area: Rect, app: &mut App) {
-    app.backups_area = area;
     let visible = app.filtered_backup_indices();
     let mut detail = app.selected_backup().map(|backup| {
         let mut parts = Vec::new();
@@ -1459,8 +1546,7 @@ fn render_backups(frame: &mut Frame, area: Rect, app: &mut App) {
     );
 }
 
-fn render_output(frame: &mut Frame, area: Rect, app: &mut App) {
-    app.output_area = area;
+fn render_output(frame: &mut Frame, area: Rect, app: &App) -> usize {
     let detail = match app.output_source {
         OutputSource::Log => format!("log {}", app.output.len()),
         OutputSource::Command => "command".to_string(),
@@ -1482,6 +1568,7 @@ fn render_output(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
     let position = app.output.len().saturating_sub(1).saturating_sub(offset);
     scrollbar(frame, area, app.output.len(), inner_height, position);
+    max_offset
 }
 
 fn render_log_line(line: &str) -> Line<'_> {
@@ -1497,7 +1584,7 @@ fn render_log_line(line: &str) -> Line<'_> {
         Span::raw(" "),
         level_chip(parts.level),
         Span::raw(" "),
-        Span::raw(parts.message),
+        Span::raw(crate::data::strip_line_controls(parts.message)),
     ])
 }
 
@@ -1536,7 +1623,7 @@ fn level_chip(level: &str) -> Span<'static> {
     }
 }
 
-fn render_footer(frame: &mut Frame, area: Rect, app: &mut App) {
+fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     let (marker, marker_style) = if let Some(frame) = app.spinner() {
         (frame, fg(ACCENT).bold())
     } else if !app.snapshot.warning.is_empty() {
@@ -1577,12 +1664,6 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
-    app.header_areas.status = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: 1,
-    };
     frame.render_widget(
         Paragraph::new(Text::from(vec![status, Line::from(hint_spans)])),
         area,
@@ -1803,7 +1884,7 @@ fn render_status(frame: &mut Frame, area: Rect, app: &App) -> usize {
     max_scroll
 }
 
-fn render_daemon(frame: &mut Frame, area: Rect, app: &mut App) {
+fn render_daemon(frame: &mut Frame, area: Rect, app: &App) -> usize {
     let popup = centered(
         area,
         area.width.saturating_sub(4).clamp(24, 72),
@@ -1863,8 +1944,6 @@ fn render_daemon(frame: &mut Frame, area: Rect, app: &mut App) {
         .line_count(content_width);
     let max_scroll = total.saturating_sub(content_height);
     let scroll = app.daemon_scroll.min(max_scroll);
-    app.daemon_scroll = scroll;
-    app.daemon_scroll_max = max_scroll;
     let detail = if max_scroll > 0 {
         "↑↓ scroll · Esc close"
     } else {
@@ -1880,9 +1959,10 @@ fn render_daemon(frame: &mut Frame, area: Rect, app: &mut App) {
         popup,
     );
     scrollbar(frame, popup, total, content_height, scroll);
+    max_scroll
 }
 
-fn render_help(frame: &mut Frame, area: Rect, app: &App) {
+fn render_help(frame: &mut Frame, area: Rect, app: &App) -> usize {
     let width = area.width.saturating_sub(2).clamp(20, 64);
     let height = area.height.saturating_sub(2).clamp(7, 22);
     let popup = centered(area, width, height);
@@ -1963,6 +2043,7 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(Text::from(visible)).block(pane_block("Help", detail, true, ACCENT)),
         popup,
     );
+    max_scroll
 }
 
 fn render_task(frame: &mut Frame, area: Rect, app: &App) {
@@ -2227,7 +2308,9 @@ mod tests {
             app.on_tick();
         }
         terminal
-            .draw(|frame| draw(frame, &mut app))
+            .draw(|frame| {
+                draw(frame, &mut app);
+            })
             .expect("draw succeeds");
         terminal
             .backend()
@@ -2236,6 +2319,36 @@ mod tests {
             .iter()
             .map(ratatui::buffer::Cell::symbol)
             .collect()
+    }
+
+    #[test]
+    fn draw_returns_the_layout_for_hit_testing() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = app();
+        let mut layout = UiLayout::default();
+        terminal
+            .draw(|frame| layout = draw(frame, &mut app))
+            .expect("draw succeeds");
+        assert_eq!(layout.actions_area.width, 26);
+        assert_eq!(layout.header.status.width, 100);
+        assert!(layout.stat_areas.iter().all(|area| area.width > 0));
+    }
+
+    #[test]
+    fn draw_reports_the_help_scroll_limit() {
+        let backend = TestBackend::new(48, 12);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = app();
+        app.open_help();
+        for _ in 0..6 {
+            app.on_tick();
+        }
+        let mut layout = UiLayout::default();
+        terminal
+            .draw(|frame| layout = draw(frame, &mut app))
+            .expect("draw succeeds");
+        assert!(layout.help_scroll_max > 0);
     }
 
     #[test]
@@ -2578,7 +2691,9 @@ mod tests {
             app.on_tick();
         }
         terminal
-            .draw(|frame| draw(frame, &mut app))
+            .draw(|frame| {
+                draw(frame, &mut app);
+            })
             .expect("draw succeeds");
         let content: String = terminal
             .backend()
@@ -2614,7 +2729,9 @@ mod tests {
         });
         app.on_tick();
         terminal
-            .draw(|frame| draw(frame, &mut app))
+            .draw(|frame| {
+                draw(frame, &mut app);
+            })
             .expect("draw succeeds");
         let content: String = terminal
             .backend()
@@ -2636,11 +2753,18 @@ mod tests {
         for _ in 0..5 {
             app.on_tick();
         }
+        let mut layout = UiLayout::default();
+        terminal
+            .draw(|frame| layout = draw(frame, &mut app))
+            .expect("draw succeeds");
+        app.apply_layout(layout);
         for _ in 0..20 {
             app.handle_key(KeyCode::Down);
         }
         terminal
-            .draw(|frame| draw(frame, &mut app))
+            .draw(|frame| {
+                draw(frame, &mut app);
+            })
             .expect("draw succeeds");
         let content: String = terminal
             .backend()
@@ -2661,7 +2785,9 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
-            .draw(|frame| draw(frame, &mut app))
+            .draw(|frame| {
+                draw(frame, &mut app);
+            })
             .expect("draw succeeds");
         let content: String = terminal
             .backend()
@@ -2710,7 +2836,9 @@ mod tests {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
-            .draw(|frame| draw(frame, app))
+            .draw(|frame| {
+                draw(frame, app);
+            })
             .expect("draw succeeds");
         terminal
             .backend()

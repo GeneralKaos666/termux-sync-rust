@@ -78,7 +78,9 @@ fn run(terminal: &mut DefaultTerminal, args: &[String]) -> io::Result<()> {
 
     loop {
         if redraw {
-            terminal.draw(|frame| ui::draw(frame, &mut app))?;
+            let mut layout = ui::UiLayout::default();
+            terminal.draw(|frame| layout = ui::draw(frame, &mut app))?;
+            app.apply_layout(layout);
             redraw = false;
         }
 
@@ -125,6 +127,10 @@ fn run(terminal: &mut DefaultTerminal, args: &[String]) -> io::Result<()> {
         }
 
         if app.poll_operation() {
+            redraw = true;
+        }
+
+        if app.poll_capabilities() {
             redraw = true;
         }
 

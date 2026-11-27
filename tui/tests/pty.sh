@@ -32,12 +32,19 @@ run_case() {
         printf '%s: exit %s\n' "$name" "$status"
         return 1
     fi
-    printf '%s: ' "$name"
     if [[ ! -s "$out" ]]; then
-        printf 'empty output\n'
+        printf '%s: empty output\n' "$name"
         return 1
     fi
-    printf 'captured %s bytes\n' "$(wc -c <"$out")"
+    if ! grep -aq $'\x1b\[?1049l' "$out"; then
+        printf '%s: did not leave the alternate screen\n' "$name"
+        return 1
+    fi
+    if ! grep -aq $'\x1b\[?1000l' "$out"; then
+        printf '%s: did not disable mouse capture\n' "$name"
+        return 1
+    fi
+    printf '%s: captured %s bytes, terminal restored\n' "$name" "$(wc -c <"$out")"
 }
 
 feed_backup='sleep 1; printf "\r"; sleep 0.3; printf "\r"; sleep 1.2; printf "\033"; sleep 0.3; printf "q"; sleep 0.3; printf "q"'

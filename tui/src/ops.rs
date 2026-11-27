@@ -532,7 +532,10 @@ where
         Ok(Some(items)) => Ok(Some(
             items
                 .into_iter()
-                .filter_map(|item| item.as_str().map(str::to_string))
+                .filter_map(|item| {
+                    item.as_str()
+                        .map(|text| data::strip_line_controls(text).into_owned())
+                })
                 .collect(),
         )),
         _ => Ok(None),
@@ -547,9 +550,9 @@ where
     T::deserialize(value).unwrap_or_default()
 }
 
-/// Text from a wire field, with control characters stripped.
+/// Text from a wire field, with control characters stripped so it fits one row.
 fn text(value: Option<String>) -> String {
-    value.map_or_default(|value| data::strip_controls(&value).into_owned())
+    value.map_or_default(|value| data::strip_line_controls(&value).into_owned())
 }
 
 fn parse_start(value: &Value) -> Event {
@@ -605,8 +608,12 @@ fn parse_progress(value: &Value) -> Event {
         stage: text(payload.stage),
         current: payload.current.unwrap_or(0),
         total: payload.total,
-        unit: payload.unit,
-        detail: payload.detail,
+        unit: payload
+            .unit
+            .map(|value| data::strip_line_controls(&value).into_owned()),
+        detail: payload
+            .detail
+            .map(|value| data::strip_line_controls(&value).into_owned()),
     }
 }
 
@@ -629,8 +636,9 @@ fn parse_verify(value: &Value) -> Event {
 fn parse_plan(value: &Value) -> Event {
     let payload: PlanPayload = payload(value);
     let versions = payload.versions.unwrap_or_default();
-    let version_text =
-        |value: Option<String>| data::strip_controls(value.as_deref().unwrap_or("—")).into_owned();
+    let version_text = |value: Option<String>| {
+        data::strip_line_controls(value.as_deref().unwrap_or("—")).into_owned()
+    };
     Event::Plan(Plan {
         name: text(payload.name),
         date: text(payload.date),
@@ -706,7 +714,9 @@ pub fn collect_backups() -> Result<Vec<Backup>, String> {
     collect_backups_with(&data::cli_bin())
 }
 
-/// Lists backups through a specific binary, keeping only `backup` events.
+/// Lists backups through a specific binary, keeping `backup` events.
+///
+/// CLI error events and unreadable lines become an error instead of an empty list.
 pub fn collect_backups_with(bin: &std::path::Path) -> Result<Vec<Backup>, String> {
     let output = std::process::Command::new(bin)
         .args(["list", "--json-events"])
@@ -716,10 +726,33 @@ pub fn collect_backups_with(bin: &std::path::Path) -> Result<Vec<Backup>, String
         return Err(format!("termux-sync list exited with {}", output.status));
     }
     let mut backups = Vec::new();
+    let mut failure = None;
+    let mut malformed = 0usize;
     for line in String::from_utf8_lossy(&output.stdout).lines() {
-        if let Ok(Event::Backup(backup)) = parse_event(line) {
-            backups.push(backup);
+        match parse_event(line) {
+            Ok(Event::Backup(backup)) => backups.push(backup),
+            Ok(Event::Error(error)) => {
+                let text = if error.hint.is_empty() {
+                    error.message
+                } else {
+                    format!("{}: {}", error.message, error.hint)
+                };
+                failure = Some(format!("termux-sync list: {text}"));
+            }
+            Ok(Event::Unsupported(version)) => {
+                failure = Some(format!(
+                    "termux-sync list uses event protocol v{version}, newer than this TUI"
+                ));
+            }
+            Ok(_) => {}
+            Err(_) => malformed += 1,
         }
+    }
+    if let Some(failure) = failure {
+        return Err(failure);
+    }
+    if backups.is_empty() && malformed > 0 {
+        return Err("termux-sync list returned no readable events".to_string());
     }
     Ok(backups)
 }
@@ -776,11 +809,26 @@ fn read_event_line<R: BufRead>(
         return Ok(LineRead::Eof);
     }
     if out.len() > limit {
-        let mut sink = String::new();
-        reader.read_line(&mut sink)?;
+        drain_line(reader)?;
         return Ok(LineRead::Oversize);
     }
     Ok(LineRead::Line)
+}
+
+/// Discards the rest of an oversized line without buffering it whole.
+fn drain_line<R: BufRead>(reader: &mut R) -> io::Result<()> {
+    loop {
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
+            return Ok(());
+        }
+        if let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+            reader.consume(newline + 1);
+            return Ok(());
+        }
+        let consumed = buffer.len();
+        reader.consume(consumed);
+    }
 }
 
 /// Whether the CLI supports `--json-events`.
@@ -793,6 +841,42 @@ pub fn supports_events() -> bool {
 #[must_use]
 pub fn supports_yes() -> bool {
     supports_flag("--yes")
+}
+
+/// CLI features probed once on a worker thread at startup.
+///
+/// Optimistic until the probe reports: unknown capability must not disable a
+/// feature the installed CLI may support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capabilities {
+    /// Whether the probe has completed.
+    pub known: bool,
+    /// Whether `--json-events` is accepted.
+    pub events: bool,
+    /// Whether `--yes` is accepted.
+    pub yes: bool,
+}
+
+impl Default for Capabilities {
+    fn default() -> Self {
+        Self {
+            known: false,
+            events: true,
+            yes: true,
+        }
+    }
+}
+
+impl Capabilities {
+    /// Probes the configured CLI. Blocking; call from a worker thread only.
+    #[must_use]
+    pub fn detect() -> Self {
+        Self {
+            known: true,
+            events: supports_flag("--json-events"),
+            yes: supports_flag("--yes"),
+        }
+    }
 }
 
 /// A running CLI child process and the state parsed from its events.
@@ -1026,15 +1110,10 @@ impl Operation {
             self.eof = true;
         }
 
+        let mut exit = None;
         if let Some(child) = &mut self.child {
             match child.try_wait() {
-                Ok(Some(status)) => {
-                    self.exit_status = Some(status);
-                    if self.exited_at.is_none() {
-                        self.exited_at = Some(Instant::now());
-                    }
-                    changed = true;
-                }
+                Ok(Some(status)) => exit = Some(status),
                 Ok(None) => {}
                 Err(error) => {
                     self.error = Some(OpError {
@@ -1046,6 +1125,15 @@ impl Operation {
                     changed = true;
                 }
             }
+        }
+        if let Some(status) = exit {
+            self.exit_status = Some(status);
+            if self.exited_at.is_none() {
+                self.exited_at = Some(Instant::now());
+            }
+            // Reaped: drop the handle so later polls stop reporting the same exit.
+            self.child = None;
+            changed = true;
         }
 
         if self.status == Status::Cancelling
@@ -1283,9 +1371,11 @@ impl Operation {
     pub fn request_cancel(&mut self) -> bool {
         if self.status == Status::AwaitingConfirm {
             let sent = self.send_stdin("{\"confirm\":\"CANCEL\"}");
-            if sent {
-                self.cancel_sent_at = Some(Instant::now());
+            if !sent {
+                // No stdin left: signal the group so the timer above can reap it.
+                self.signal_group(libc::SIGINT);
             }
+            self.cancel_sent_at = Some(Instant::now());
             self.status = Status::Cancelling;
             return true;
         }
@@ -1687,6 +1777,42 @@ mod tests {
             assert_eq!(total, 100.0);
         }
     }
+
+    #[test]
+    fn event_text_is_rendered_on_one_terminal_line() {
+        let event =
+            parse_event(r#"{"event":"log","level":"INFO","message":"first\nsecond\tentry"}"#)
+                .unwrap();
+        assert!(matches!(event, Event::Log { ref message, .. } if message == "firstsecondentry"));
+
+        let event =
+            parse_event(r#"{"event":"progress","stage":"packages","current":1,"detail":"a\nb"}"#)
+                .unwrap();
+        assert!(
+            matches!(event, Event::Progress { ref detail, .. } if detail.as_deref() == Some("ab"))
+        );
+    }
+
+    #[test]
+    fn package_lists_drop_escape_sequences() {
+        let event = parse_event(
+            r#"{"event":"package_diff","category":"to_install","part":1,"parts":1,"packages":["\u001b[31mgit","vim"]}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            event,
+            Event::PackageDiff { ref packages, .. } if packages == &["[31mgit".to_string(), "vim".to_string()]
+        ));
+    }
+
+    #[test]
+    fn cancelling_from_confirm_arms_the_timer_without_stdin() {
+        let mut op = test_operation(Kind::Restore);
+        op.status = Status::AwaitingConfirm;
+        assert!(op.request_cancel());
+        assert_eq!(op.status, Status::Cancelling);
+        assert!(op.cancel_sent_at.is_some());
+    }
 }
 
 #[cfg(test)]
@@ -1797,5 +1923,60 @@ mod fixture_tests {
             LineRead::Line
         ));
         assert_eq!(line, "next\n");
+    }
+
+    #[test]
+    fn oversized_line_larger_than_the_reader_buffer_is_drained() {
+        let mut input = vec![b'x'; 20_000];
+        input.push(b'\n');
+        input.extend_from_slice(b"next\n");
+        let mut reader = BufReader::new(&input[..]);
+        let mut line = String::new();
+        assert!(matches!(
+            read_event_line(&mut reader, 8, &mut line).unwrap(),
+            LineRead::Oversize
+        ));
+        assert!(matches!(
+            read_event_line(&mut reader, 8, &mut line).unwrap(),
+            LineRead::Line
+        ));
+        assert_eq!(line, "next\n");
+    }
+
+    #[test]
+    fn a_reaped_child_stops_reporting_changes() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("fake");
+        fs::write(&bin, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let _lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _env = ScopedEnv::set("TERMUX_SYNC_BIN", &bin);
+        let mut op = Operation::start(Kind::Backup, "x", vec!["backup".into()], false).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !op.is_done() && std::time::Instant::now() < deadline {
+            op.poll();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(op.is_done());
+        assert!(!op.poll());
+    }
+
+    #[test]
+    fn list_reports_cli_errors_instead_of_an_empty_result() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("fake");
+        fs::write(
+            &bin,
+            "#!/bin/sh\nprintf '%s\\n' '{\"event\":\"error\",\"message\":\"remote unreachable\",\"hint\":\"check the token\"}'\n",
+        )
+        .unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let error = collect_backups_with(&bin).unwrap_err();
+        assert!(error.contains("remote unreachable"));
+        assert!(error.contains("check the token"));
     }
 }
