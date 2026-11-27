@@ -5,7 +5,7 @@ fn recorded_cases() {
     // trycmd 1.2.1 has no `TestCases::cwd`, so the working directory must be
     // changed globally. This is the only test in this binary, so the change
     // cannot race with another test.
-    std::env::set_current_dir(&root).unwrap();
+    std::env::set_current_dir(root).unwrap();
     trycmd::TestCases::new()
         .register_bin(
             "run-original",
