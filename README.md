@@ -28,14 +28,14 @@ either direction.
 The TUI shows backups, storage totals, schedules, and the current log:
 
 <p align="center">
-  <img src="assets/tui.png" alt="termux-sync-tui dashboard with four backups, storage totals, and recent log lines" width="900">
+  <img src="https://raw.githubusercontent.com/GeneralKaos666/termux-sync-rust/main/assets/tui.png" alt="termux-sync-tui dashboard with four backups, storage totals, and recent log lines" width="900">
 </p>
 
 The CLI lists each backup with its date, label, package count, version, compression,
 and size:
 
 <p align="center">
-  <img src="assets/cli.png" alt="termux-sync list output showing two backups" width="620">
+  <img src="https://raw.githubusercontent.com/GeneralKaos666/termux-sync-rust/main/assets/cli.png" alt="termux-sync list output showing two backups" width="620">
 </p>
 
 Both screenshots come from the release binaries and use demo data.
@@ -54,6 +54,9 @@ Both screenshots come from the release binaries and use demo data.
 | TUI | Ratatui dashboard with live progress and typed restore confirmation |
 | Maintenance | Disk check, cache cleaner, log viewer, and log reset |
 | Portable config | Export and import settings without exposing tokens |
+
+The library crate is an internal implementation detail shared by the two binaries.
+It is public because Cargo requires it, but no API stability is promised.
 
 ---
 
@@ -100,6 +103,12 @@ bash install.sh
 
 `install.sh` builds `termux-sync` and `termux-sync-tui` and installs both into
 `$PREFIX/bin`.
+
+After the first crates.io release, you can install both commands with:
+
+```bash
+cargo install termux-sync
+```
 
 To keep an existing Python command as a rollback, run `bash cutover.sh`. The old
 command is saved as `termux-sync-python`.
@@ -360,7 +369,9 @@ termux-sync-tui
 
 It needs a termux-sync 2.0 build. Use `--ascii` or `TERMUX_SYNC_TUI_ASCII=1` when the
 terminal font renders the icons badly. Keys and layout live in
-[tui/README.md](tui/README.md); recovery steps live in [tui/RUNBOOK.md](tui/RUNBOOK.md).
+[docs/tui/README.md](https://github.com/GeneralKaos666/termux-sync-rust/blob/main/docs/tui/README.md);
+recovery steps live in
+[docs/tui/RUNBOOK.md](https://github.com/GeneralKaos666/termux-sync-rust/blob/main/docs/tui/RUNBOOK.md).
 
 ---
 

@@ -17,6 +17,12 @@ bash install.sh
 
 This builds the Rust sources and installs `termux-sync` and `termux-sync-tui` into `$PREFIX/bin`.
 
+After the first crates.io release, you can install both commands with Cargo:
+
+```bash
+cargo install termux-sync
+```
+
 **Can I install termux-sync without internet access?**
 
 Yes. Clone or download the repository manually, then run `bash install.sh` from the project directory. Rust (`pkg install rust`) must be available through the Termux package manager or already installed. The build itself needs no network access once the crates are cached.

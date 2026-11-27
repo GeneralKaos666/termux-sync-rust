@@ -10,6 +10,9 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- The CLI, core, and TUI now live in one `termux-sync` crate with two binaries.
+  The package carries complete crates.io metadata and the library is documented
+  as an internal implementation detail.
 - The README and FAQ document the Rust build only. They credit the original
   Python project at `djunekz/termux-sync` and state that backups are compatible
   in both directions.

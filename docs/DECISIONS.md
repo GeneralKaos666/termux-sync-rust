@@ -387,3 +387,21 @@ after `tui` pass through (`--ascii`, `--no-anim`, `--help`, `--version`).
 Consequences: The CLI binary grows by the TUI dependency. Both entry points share one
 implementation. Help text and integration tests cover `tui --version`, `tui --help` and
 the non-TTY refusal.
+
+## ADR-028: One crate for the CLI, core, and TUI
+
+Status: accepted (2026-11-26)
+
+Context: The repository shipped three crates: a core library, a CLI, and a TUI.
+Publishing them separately would require three crates.io releases, versioned path
+dependencies, and a coordinated publish order. Users install the two commands
+together and never depend on the library directly.
+
+Decision: Merge `app`, `core`, and `tui` into one `termux-sync` package. Both
+binaries live in the same package. The library remains public because Cargo
+binaries cannot access private library items, but it is documented as an internal
+implementation detail with no stability promise.
+
+Consequences: One `cargo install termux-sync` installs both commands. One
+`Cargo.toml` holds the version and publish metadata. The package builds and
+verifies as a single unit.

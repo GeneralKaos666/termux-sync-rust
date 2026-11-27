@@ -70,11 +70,11 @@ The standalone `termux-sync-tui` binary is kept as an alias for the same
 library. In a development checkout:
 
 ```bash
-cargo run -p termux-sync-rs -- tui
+cargo run --bin termux-sync -- tui
 ```
 
-`tui/install.sh` accepts `--prefix PATH` and `--skip-build`. It copies the release
-binary into `$PREFIX/bin`.
+The root `install.sh` installs both `termux-sync` and `termux-sync-tui` into
+`$PREFIX/bin`.
 
 Requires a terminal on stdout. Non-TTY runs exit with status 2 instead of
 drawing garbage.

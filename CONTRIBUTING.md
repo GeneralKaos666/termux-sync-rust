@@ -62,8 +62,8 @@ bash install.sh
 Run from the checkout:
 
 ```bash
-cargo run -p termux-sync-rs -- --help
-cargo run -p termux-sync-rs -- tui
+cargo run --bin termux-sync -- --help
+cargo run --bin termux-sync -- tui
 ```
 
 ---
@@ -71,18 +71,18 @@ cargo run -p termux-sync-rs -- tui
 ## Running Tests
 
 ```bash
-cargo test --locked --workspace
+cargo test --locked
 ```
 
 Check formatting and lints before opening a pull request:
 
 ```bash
 cargo fmt --all --check
-cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo clippy --locked --all-targets -- -D warnings
 ```
 
 App replay cases live in `app-cases/`; CLI integration tests live in
-`app/tests/cli_integration.rs`.
+`tests/cli_integration.rs`.
 
 ---
 
@@ -102,7 +102,7 @@ Pull requests that lack context, break existing commands, or introduce large unr
 ## Code Style
 
 - Follow standard `rustfmt` output and keep `clippy -D warnings` clean.
-- Shell scripts (`install.sh`, `cutover.sh`, `smoke-github.sh`, `tui/install.sh`) use 4-space indentation and `set -euo pipefail`.
+- Shell scripts (`install.sh`, `cutover.sh`, `smoke-github.sh`) use 4-space indentation and `set -euo pipefail`.
 - Keep functions and modules focused. If a file is growing large, consider splitting it.
 - Add inline comments for non-obvious logic. Avoid comments that just restate what the code does.
 - Do not add a dependency without discussion in an issue first.
