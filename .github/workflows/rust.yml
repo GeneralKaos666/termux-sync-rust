@@ -1,28 +1,39 @@
-name: Rust
+name: CI
 
 on:
   push:
     paths:
-      - "app/**"
-      - "core/**"
-      - "tui/**"
+      - "src/**"
+      - "tests/**"
+      - "examples/**"
+      - "app-cases/**"
+      - "fixtures/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "install.sh"
+      - "README.md"
+      - "LICENSE"
       - ".github/workflows/rust.yml"
   pull_request:
     paths:
-      - "app/**"
-      - "core/**"
-      - "tui/**"
+      - "src/**"
+      - "tests/**"
+      - "examples/**"
+      - "app-cases/**"
+      - "fixtures/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "install.sh"
+      - "README.md"
+      - "LICENSE"
       - ".github/workflows/rust.yml"
 
+permissions:
+  contents: read
+
 jobs:
-  app:
-    name: CLI and core
+  check:
+    name: Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -32,6 +43,53 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Test
-        run: cargo test --locked --workspace
+        run: cargo test --locked
       - name: Clippy
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+  pty:
+    name: PTY
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: PTY tests
+        run: bash tests/pty.sh
+
+  android:
+    name: Android targets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - name: Build for Android
+        run: cargo ndk -t arm64-v8a -t armeabi-v7a build --locked --release --bins
+
+  release:
+    name: Release build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release binaries
+        run: cargo build --locked --release --bins
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: List package
+        run: cargo package --list --locked
+      - name: Check publish
+        run: cargo publish --dry-run --locked
