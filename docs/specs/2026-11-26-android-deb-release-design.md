@@ -266,17 +266,18 @@ pkg install ./termux-sync_2.0.0_aarch64.deb
 ## Release Sequence
 
 1. Implement this repository's builder and workflow. Run local packaging tests.
-2. Push a branch and run `workflow_dispatch` in build-only mode. Download the
+2. Merge to `main` and run `workflow_dispatch` in build-only mode. Download the
    `aarch64` artifact, extract it, and run both `--version` commands on this
    device.
-3. Implement `termux-apt-repo` changes and run its Python tests. Open a PR.
-4. Merge this repository's changes to `main`.
-5. Push tag `v2.0.0`. The release workflow builds both debs, signs them, and
+3. Push tag `v2.0.0`. The release workflow builds both debs, signs them, and
    creates the GitHub Release.
-6. Download the `arm` and `aarch64` debs and verify signatures and checksums.
-7. Compute the tag tarball SHA256, update the apt PR recipe, and merge it.
-8. Let the apt sync workflow build both architectures and publish.
-9. Verify `Packages` exists for `aarch64` and `arm`, and that the deb pool
+4. Download the `arm` and `aarch64` debs and verify signatures and checksums.
+5. Implement the `termux-apt-repo` changes, compute the tag tarball SHA256, run
+   its Python tests, and open a PR. The PR comes after the tag so its recipe
+   source URL is live.
+6. Merge the apt PR after review. Its sync workflow builds both architectures
+   and publishes.
+7. Verify `Packages` exists for `aarch64` and `arm`, and that the deb pool
    contains both packages.
 
 ## Verification
