@@ -30,7 +30,7 @@ Use `q` after an operation completes to leave the TUI.
 ## Backup cancel
 
 `Esc` / `c` on a running backup opens a confirmation card. Enter sends SIGINT
-to the child process group; the cleanup path in `termux-sync-core` removes
+to the child process group; the cleanup path in the core library removes
 temporary files and incomplete stream parts. The TUI records `cancelled`.
 
 If the process does not exit within 10 seconds, the TUI sends SIGKILL and says

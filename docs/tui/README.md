@@ -24,7 +24,7 @@ the `termux-sync` event protocol; setup and schedule hand the terminal to
 - Daemon: shows schedule state, boot script presence, recent daemon log lines,
   and the manual start command. It does not start or stop the daemon.
 - Config: export and import prompts take a path and run the CLI. Export
-  redaction and import validation run in `termux-sync-core`.
+  redaction and import validation run in the core library.
 - Disk check: blank uses the CLI default overview; a path checks that target.
 - Clear logs: confirms in the TUI, then runs `termux-sync clear-logs --yes`.
   An older CLI falls back to the terminal confirmation.
