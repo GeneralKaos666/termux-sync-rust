@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build without the leading v"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  GPG_KEY_ID: 476FC230ECBBFDF0
+
+jobs:
+  debs:
+    name: Deb ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            ndk_abi: arm64-v8a
+            rust_target: aarch64-linux-android
+          - arch: arm
+            ndk_abi: armeabi-v7a
+            rust_target: armv7-linux-androideabi
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$VERSION_INPUT"
+          fi
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Assert version matches Cargo
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          test "$cargo_version" = "${{ steps.version.outputs.version }}"
+      - name: Build Android binaries
+        run: cargo ndk -t ${{ matrix.ndk_abi }} build --locked --release --bins
+      - name: Build deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build-deb.sh \
+            "${{ matrix.arch }}" \
+            "${{ steps.version.outputs.version }}" \
+            "target/${{ matrix.rust_target }}/release" \
+            dist
+          dpkg-deb -I "dist/termux-sync_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb"
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: dist/*.deb
+          if-no-files-found: error
+
+  sign:
+    name: Sign and release
+    if: github.event_name == 'push'
+    needs: debs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download debs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: deb-*
+          merge-multiple: true
+          path: dist
+      - name: Import signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -p "$GNUPGHOME"
+          chmod 700 "$GNUPGHOME"
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+      - name: Sign debs and checksums
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          for deb in dist/*.deb; do
+            printf '%s' "$GPG_PASSPHRASE" | gpg --batch --yes \
+              --pinentry-mode loopback --passphrase-fd 0 \
+              --armor --detach-sign --local-user "$GPG_KEY_ID" "$deb"
+          done
+          (cd dist && sha256sum ./*.deb > SHA256SUMS)
+          printf '%s' "$GPG_PASSPHRASE" | gpg --batch --yes \
+            --pinentry-mode loopback --passphrase-fd 0 \
+            --armor --detach-sign --local-user "$GPG_KEY_ID" dist/SHA256SUMS
+          gpg --armor --export "$GPG_KEY_ID" > dist/termux-sync-signing-key.asc
+      - name: Verify signatures
+        run: |
+          set -euo pipefail
+          gpg --verify dist/SHA256SUMS.asc dist/SHA256SUMS
+          (cd dist && sha256sum -c SHA256SUMS)
+          for deb in dist/*.deb; do
+            gpg --verify "$deb.asc" "$deb"
+          done
+          test "$(gpg --with-colons --fingerprint "$GPG_KEY_ID" | awk -F: '/^fpr:/ {print $10; exit}')" = "$GPG_KEY_ID"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          gh release view "$tag" >/dev/null 2>&1 || \
+            gh release create "$tag" --title "termux-sync $tag" --generate-notes
+          gh release upload "$tag" dist/* --clobber
