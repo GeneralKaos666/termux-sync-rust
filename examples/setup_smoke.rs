@@ -1,6 +1,6 @@
 //! Smoke test for the interactive setup and schedule commands.
-use termux_sync_core::core::errors::CoreError;
-use termux_sync_core::core::maintenance;
+use termux_sync::core::errors::CoreError;
+use termux_sync::core::maintenance;
 
 fn main() -> Result<(), CoreError> {
     match std::env::args().nth(1).as_deref() {

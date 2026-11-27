@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 /// Program name used in the config directory and user-facing text.
 pub const APP_NAME: &str = "termux-sync";
 /// Version reported by `--version` and the TUI handshake.
-pub const VERSION: &str = "2.0.0";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// `$HOME` made absolute, falling back to `/` when unset or empty.
 #[must_use]

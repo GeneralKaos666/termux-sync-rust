@@ -2104,13 +2104,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "termux-sync-core"
+name = "termux-sync"
 version = "2.0.0"
 dependencies = [
  "bzip2",
  "chrono",
  "flate2",
  "fs4",
+ "libc",
+ "ratatui",
  "regex",
  "rustix",
  "serde",
@@ -2120,34 +2122,10 @@ dependencies = [
  "tempfile",
  "terminal_size",
  "thiserror 2.0.21",
+ "trycmd",
+ "unicode-width",
  "ureq",
  "xz2",
-]
-
-[[package]]
-name = "termux-sync-rs"
-version = "2.0.0"
-dependencies = [
- "serde_json",
- "sha2",
- "tar",
- "tempfile",
- "termux-sync-core",
- "termux-sync-tui",
- "trycmd",
-]
-
-[[package]]
-name = "termux-sync-tui"
-version = "2.0.0"
-dependencies = [
- "libc",
- "ratatui",
- "serde",
- "serde_json",
- "tempfile",
- "termux-sync-core",
- "unicode-width",
 ]
 
 [[package]]

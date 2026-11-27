@@ -1,6 +1,6 @@
 //! Smoke test for status, logs and config export/import.
-use termux_sync_core::core::errors::CoreError;
-use termux_sync_core::core::{config, maintenance};
+use termux_sync::core::errors::CoreError;
+use termux_sync::core::{config, maintenance};
 
 fn main() -> Result<(), CoreError> {
     let cfg = config::load_config()?;

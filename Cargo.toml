@@ -1,8 +1,56 @@
-[workspace]
-members = ["app", "core", "tui"]
-resolver = "3"
+[package]
+name = "termux-sync"
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.100"
+license = "MIT"
+description = "Back up and restore a Termux environment across devices"
+repository = "https://github.com/GeneralKaos666/termux-sync-rust"
+readme = "README.md"
+keywords = ["termux", "android", "backup", "restore", "cli"]
+categories = ["command-line-utilities", "filesystem"]
+publish = true
+include = [
+    "src/**",
+    "examples/**",
+    "tests/**",
+    "app-cases/**",
+    "fixtures/**",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+]
 
-[workspace.lints.clippy]
+[lib]
+name = "termux_sync"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip", "unbounded_depth"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+sha2 = "0.10"
+thiserror = "2"
+terminal_size = "0.4"
+regex = "1"
+ureq = { version = "3.5", default-features = false, features = ["rustls", "json"] }
+fs4 = "0.13"
+tar = { version = "0.4", default-features = false }
+flate2 = { version = "1", default-features = false, features = ["miniz_oxide"] }
+bzip2 = "0.6"
+xz2 = "0.1"
+rustix = { version = "1", features = ["fs"] }
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
+libc = "0.2"
+unicode-width = "0.2"
+
+[dev-dependencies]
+trycmd = "1"
+tempfile = "3"
+sha2 = "0.10"
+tar = { version = "0.4", default-features = false }
+
+[lints.clippy]
 all = { level = "warn", priority = -1 }
 redundant_clone = "warn"
 perf = "warn"
@@ -10,7 +58,7 @@ assigning_clones = "warn"
 unused_self = "warn"
 match_same_arms = "warn"
 
-[workspace.lints.rust]
+[lints.rust]
 missing_docs = "warn"
 unused_lifetimes = "warn"
 trivial_numeric_casts = "warn"

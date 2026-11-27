@@ -1,7 +1,7 @@
 //! Smoke test for restoring a local backup.
 use serde_json::json;
-use termux_sync_core::core::backup;
-use termux_sync_core::core::errors::CoreError;
+use termux_sync::core::backup;
+use termux_sync::core::errors::CoreError;
 
 fn main() -> Result<(), CoreError> {
     let name = std::env::args().nth(1).unwrap_or_default();
