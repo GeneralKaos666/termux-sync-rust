@@ -101,6 +101,11 @@ src/
   bin/
     termux-sync.rs
     termux-sync-tui.rs
+examples/
+  backup_smoke.rs
+  maintenance_smoke.rs
+  restore_smoke.rs
+  setup_smoke.rs
 tests/
   cli_integration.rs
   app_cases.rs
@@ -122,6 +127,7 @@ Source mapping:
 | `core/src/core/*.rs` | `src/core/*.rs` |
 | `core/src/port.rs` | `src/port.rs` |
 | `core/src/lib.rs` | `src/lib.rs` |
+| `core/examples/*.rs` | `examples/*.rs` |
 | `tui/src/lib.rs` | `src/tui/mod.rs` |
 | `tui/src/{app,data,history,ops,ui}.rs` | `src/tui/*.rs` |
 | `app/src/frontdoor.rs` | `src/frontdoor.rs` |
@@ -171,6 +177,8 @@ The `termux-sync tui` subcommand keeps calling
   `crate::core::fsutil`.
 - In `src/core/paths.rs`, set `VERSION` to `env!("CARGO_PKG_VERSION")`.
   Keep the `VERSION` name so manifest and render code do not change.
+- In `examples/*.rs`, replace `termux_sync_core::` imports with
+  `termux_sync::`.
 - Update the trycmd test to register `env!("CARGO_BIN_EXE_termux-sync")` and
   resolve cases from `CARGO_MANIFEST_DIR`.
 - Update `tests/pty.sh` so it builds from the repository root and runs
@@ -229,6 +237,7 @@ Package contents are limited with `include`:
 ```toml
 include = [
   "src/**",
+  "examples/**",
   "tests/**",
   "app-cases/**",
   "fixtures/**",
