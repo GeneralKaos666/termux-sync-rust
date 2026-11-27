@@ -23,6 +23,21 @@ After the first crates.io release, you can install both commands with Cargo:
 cargo install termux-sync
 ```
 
+**How do I verify a prebuilt .deb?**
+
+Download the `.deb`, `termux-sync-signing-key.asc`, `SHA256SUMS`, and
+`SHA256SUMS.asc` from the matching GitHub Release. The key fingerprint is
+`1DED 0840 4574 B867 B058 A7BB 476F C230 ECBB FDF0`
+(`476FC230ECBBFDF0`).
+
+```bash
+gpg --import termux-sync-signing-key.asc
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum -c SHA256SUMS
+gpg --verify termux-sync_2.0.0_aarch64.deb.asc termux-sync_2.0.0_aarch64.deb
+pkg install ./termux-sync_2.0.0_aarch64.deb
+```
+
 **Can I install termux-sync without internet access?**
 
 Yes. Clone or download the repository manually, then run `bash install.sh` from the project directory. Rust (`pkg install rust`) must be available through the Termux package manager or already installed. The build itself needs no network access once the crates are cached.

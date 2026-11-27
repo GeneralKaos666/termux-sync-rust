@@ -110,6 +110,42 @@ After the first crates.io release, you can install both commands with:
 cargo install termux-sync
 ```
 
+### Prebuilt Termux packages
+
+Pick the architecture from `uname -m`: `aarch64` or `arm`. Download
+`termux-sync_2.0.0_<arch>.deb`, `termux-sync-signing-key.asc`, `SHA256SUMS`, and
+`SHA256SUMS.asc` from
+the `v2.0.0` GitHub Release. The signing key fingerprint is
+`1DED 0840 4574 B867 B058 A7BB 476F C230 ECBB FDF0`
+(`476FC230ECBBFDF0`).
+
+```bash
+gpg --import termux-sync-signing-key.asc
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum -c SHA256SUMS
+gpg --verify termux-sync_2.0.0_aarch64.deb.asc termux-sync_2.0.0_aarch64.deb
+pkg install ./termux-sync_2.0.0_aarch64.deb
+```
+
+The package installs both commands and depends on `dpkg`.
+
+### Apt repository
+
+The package is also available from the personal apt repository:
+
+```bash
+mkdir -p "$PREFIX/etc/apt/keyrings"
+curl -fsSL https://generalkaos666.github.io/termux-apt-repo/key.gpg \
+     -o "$PREFIX/etc/apt/keyrings/termux-apt-repo.gpg"
+echo "deb [signed-by=$PREFIX/etc/apt/keyrings/termux-apt-repo.gpg] https://generalkaos666.github.io/termux-apt-repo stable main" \
+     > "$PREFIX/etc/apt/sources.list.d/termux-apt-repo.list"
+apt update
+apt install termux-sync
+```
+
+See [GeneralKaos666/termux-apt-repo](https://github.com/GeneralKaos666/termux-apt-repo)
+for the repository details.
+
 To keep an existing Python command as a rollback, run `bash cutover.sh`. The old
 command is saved as `termux-sync-python`.
 

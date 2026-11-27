@@ -60,7 +60,10 @@ The release process:
 1. Update the version in the root `Cargo.toml`
 2. Add an entry to `CHANGELOG.md` under the new version number
 3. Create and push a version tag in the form `vX.Y.Z`
-4. The release workflow creates a GitHub Release automatically with the archive and changelog entry
+4. The release workflow builds and signs the `aarch64` and `arm` Termux debs and
+   creates the GitHub Release with both packages, signatures, checksums, and
+   the public key
+5. The apt repository publishes the package after its sync PR merges
 
 Pre-release versions use the format `vX.Y.Z-beta.N` or `vX.Y.Z-rc.N`.
 
