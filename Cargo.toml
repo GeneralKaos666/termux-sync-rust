@@ -25,6 +25,14 @@ include = [
 name = "termux_sync"
 path = "src/lib.rs"
 
+[[bin]]
+name = "termux-sync"
+path = "src/bin/termux-sync.rs"
+
+[[bin]]
+name = "termux-sync-tui"
+path = "src/bin/termux-sync-tui.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip", "unbounded_depth"] }

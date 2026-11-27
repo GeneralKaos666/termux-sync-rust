@@ -5,5 +5,6 @@
 //! stability is promised.
 
 pub mod core;
+pub mod frontdoor;
 pub mod port;
 pub mod tui;

@@ -3,8 +3,8 @@
 use std::ffi::{OsStr, OsString};
 use std::process::ExitCode;
 
-use termux_sync_core::core::errors::{self, CoreError};
-use termux_sync_core::port;
+use crate::core::errors::{self, CoreError};
+use crate::port;
 
 /// Parsed command-line options shared by all subcommands.
 #[derive(Debug)]
@@ -192,7 +192,7 @@ fn parse_args(args: &[OsString]) -> Result<Parsed, String> {
 
 /// Parses process arguments, dispatches the command, and returns its exit code.
 ///
-/// `tui` is forwarded to [`termux_sync_tui::main_entry`]; usage errors map to 2 and runtime errors to 1.
+/// `tui` is forwarded to [`crate::tui::main_entry`]; usage errors map to 2 and runtime errors to 1.
 pub fn run_from_argv() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     if args.first().is_some_and(|arg| arg == OsStr::new("tui")) {
@@ -200,7 +200,7 @@ pub fn run_from_argv() -> ExitCode {
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-        return match termux_sync_tui::main_entry("termux-sync tui", &rest) {
+        return match crate::tui::main_entry("termux-sync tui", &rest) {
             Ok(code) => code,
             Err(error) => {
                 eprintln!("termux-sync tui: {error}");
@@ -222,7 +222,7 @@ pub fn run_from_argv() -> ExitCode {
         port::set_debug(true);
     }
     if version {
-        println!("termux-sync v{}", termux_sync_core::core::paths::VERSION);
+        println!("termux-sync v{}", crate::core::paths::VERSION);
         return ExitCode::SUCCESS;
     }
     if help || positionals.is_empty() || positionals[0] == OsStr::new("help") {
